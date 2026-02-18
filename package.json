@@ -1,0 +1,12 @@
+{
+  "name": "wayfo",
+  "version": "1.0.0",
+  "description": "Wayfor通过自动化工具无缝连接Amazon和Wayfair两大电商平台，帮助用户高效迁移和优化家居产品数据，实现从数据采集到上架的全链路自动化，同时注重图片创意再生和人工审核，确保产品质量和合规性。目的是简化电商运营流程，让小型商家或开发者能够轻松扩展业务，创造更多家居领域的创新机会。",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC"
+}

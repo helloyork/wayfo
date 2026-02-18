@@ -1,0 +1,49 @@
+# Node.js
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Optional npm cache directory
+.npm/
+
+# Optional eslint cache
+.eslintcache
+
+# dotenv environment variable files
+.env
+.env.*.local
+
+# VSCode settings
+.vscode/
+
+# Mac system files
+.DS_Store
+
+# next.js
+.next/
+out/
+
+# build output
+dist/
+build/
+
+# logs
+logs/
+*.log
+
+# test output
+coverage/
+coverage-final.json
+
+# local data
+*.sqlite
+
+# misc
+*.local
+*.sublime-workspace
+*.swp
