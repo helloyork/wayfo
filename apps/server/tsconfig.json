@@ -4,6 +4,8 @@
     "module": "CommonJS",
     "outDir": "dist",
     "rootDir": "src",
+    "declaration": false,
+    "declarationMap": false,
     "types": ["node"],
     "strict": true
   },

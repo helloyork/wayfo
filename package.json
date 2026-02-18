@@ -1,15 +1,22 @@
 {
   "name": "wayfo",
   "version": "1.0.0",
-  "description": "Wayfor通过自动化工具无缝连接Amazon和Wayfair两大电商平台，帮助用户高效迁移和优化家居产品数据，实现从数据采集到上架的全链路自动化，同时注重图片创意再生和人工审核，确保产品质量和合规性。目的是简化电商运营流程，让小型商家或开发者能够轻松扩展业务，创造更多家居领域的创新机会。",
+  "description": "Wayfor通过自动化工具无缝连接Amazon和Wayfair两大电商平台，帮助用户高效迁移和优化家居产品数据，实现从数据采集到上架的全链路自动化",
   "private": true,
   "main": "index.js",
   "scripts": {
     "dev": "concurrently -k \"yarn:dev:server\" \"yarn:dev:web\"",
     "dev:server": "yarn workspace @wayfo/server dev",
     "dev:web": "yarn workspace @wayfo/web dev",
-    "build": "yarn workspaces run build",
-    "lint": "yarn workspaces run lint",
+    "dev:shared": "yarn workspace @wayfo/shared dev:build",
+    "build": "yarn workspaces foreach -A --topological run build",
+    "build:server": "yarn workspace @wayfo/server build",
+    "build:web": "yarn workspace @wayfo/web build",
+    "build:shared": "yarn workspace @wayfo/shared build",
+    "lint": "yarn workspaces foreach -A --topological run lint",
+    "lint:server": "yarn workspace @wayfo/server lint",
+    "lint:web": "yarn --cwd apps/web lint",
+    "lint:shared": "yarn workspace @wayfo/shared lint",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "workspaces": [

@@ -5,7 +5,7 @@ import { ensureDir, runsRoot } from "./paths";
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 type LogEntry = {
-  timestamp: string;
+  timestamp?: string;
   level: LogLevel;
   runId?: string;
   jobId?: string;

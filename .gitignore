@@ -63,3 +63,9 @@ data/
 *.local
 *.sublime-workspace
 *.swp
+
+
+tsconfig.tsbuildinfo
+yarn.lock
+pnp.cjs
+.pnp.loader.mjs

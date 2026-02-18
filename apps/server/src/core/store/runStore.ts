@@ -14,6 +14,38 @@ import { getDb } from "./sqlite";
 
 const schemaVersion = "v1";
 
+type RunRow = {
+  id: string;
+  status: RunStatus;
+  currentStep: Step | null;
+  amazonUrl: string;
+  marketContext: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type JobRow = {
+  id: string;
+  runId: string;
+  step: Step;
+  status: Job["status"];
+  inputHash: string;
+  attempts: number;
+  errorSummary: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+type ArtifactRow = {
+  id: string;
+  runId: string;
+  jobId: string | null;
+  type: string;
+  path: string;
+  schemaVersion: string;
+  createdAt: string;
+};
+
 function writeJson(filePath: string, data: unknown) {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
@@ -69,12 +101,12 @@ export function listRuns(): Run[] {
   const db = getDb();
   const rows = db
     .prepare("select * from runs order by createdAt desc")
-    .all();
+    .all() as RunRow[];
   return rows.map((row) => ({
     id: row.id,
     amazonUrl: row.amazonUrl,
     marketContext: row.marketContext ?? undefined,
-    status: row.status as RunStatus,
+    status: row.status,
     currentStep: row.currentStep ?? undefined,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt
@@ -209,11 +241,11 @@ export function listJobs(runId: string): Job[] {
   const db = getDb();
   const rows = db
     .prepare("select * from jobs where runId = ? order by createdAt asc")
-    .all(runId);
+    .all(runId) as JobRow[];
   return rows.map((row) => ({
     id: row.id,
     runId: row.runId,
-    step: row.step as Step,
+    step: row.step,
     status: row.status,
     inputHash: row.inputHash,
     attempts: row.attempts,
@@ -269,7 +301,7 @@ export function listArtifacts(runId: string): Artifact[] {
   const db = getDb();
   const rows = db
     .prepare("select * from artifacts where runId = ? order by createdAt asc")
-    .all(runId);
+    .all(runId) as ArtifactRow[];
   return rows.map((row) => ({
     id: row.id,
     runId: row.runId,
