@@ -4,8 +4,9 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
+
+# Lockfiles (keep yarn.lock; ignore others to avoid mixing)
 package-lock.json
-yarn.lock
 pnpm-lock.yaml
 
 # Optional npm cache directory
@@ -19,7 +20,12 @@ pnpm-lock.yaml
 .env.*.local
 
 # VSCode settings
-.vscode/
+# Commit shared settings/extensions; ignore personal/local-only files
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+!.vscode/tasks.json
 
 # Mac system files
 .DS_Store
@@ -42,6 +48,16 @@ coverage-final.json
 
 # local data
 *.sqlite
+data/
+
+# Yarn (Berry) + PnP
+.yarn/cache/
+.yarn/unplugged/
+.yarn/build-state.yml
+.yarn/install-state.gz
+
+# Keep SDKs (needed for TS under PnP)
+!.yarn/sdks/
 
 # misc
 *.local
