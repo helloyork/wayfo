@@ -1,6 +1,8 @@
-import { CreateRunForm } from "../components/CreateRunForm";
+import { RunEntryGate } from "../components/RunEntryGate";
 import { RunList } from "../components/RunList";
 import { fetchJson } from "../../lib/api";
+
+export const dynamic = "force-dynamic";
 
 type Run = {
   id: string;
@@ -18,7 +20,7 @@ export default async function RunsPage() {
         <h2>Runs</h2>
         <div className="muted">查看所有执行记录与状态</div>
       </div>
-      <CreateRunForm />
+      <RunEntryGate />
       <RunList runs={runs} title="全部 Runs" />
     </div>
   );

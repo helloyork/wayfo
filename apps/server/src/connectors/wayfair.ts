@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { dataRoot, ensureDir } from "../core/paths";
 import { getWayfairPool } from "../core/pools/registry";
+import { log } from "../core/logger";
 
 export type WayfairEnv = "sandbox" | "prod";
 
@@ -24,6 +25,44 @@ export class WayfairApiError extends Error {
 type WayfairTokenCache = WayfairAuthToken & { clientId: string };
 
 const tokenCache = new Map<string, WayfairTokenCache>();
+
+function normalizeCredential(value: string, mode: "trim" | "no-whitespace") {
+  const trimmed = value.trim();
+  if (mode === "trim") {
+    return trimmed;
+  }
+  return trimmed.replace(/\s+/g, "");
+}
+
+function maskSecret(value: string) {
+  if (!value) {
+    return "";
+  }
+  if (value.length <= 6) {
+    return "***";
+  }
+  return `${value.slice(0, 3)}***${value.slice(-3)}`;
+}
+
+function hasWhitespace(value: string) {
+  return /\s/.test(value);
+}
+
+async function safeReadBody(response: Response) {
+  try {
+    const text = await response.text();
+    if (!text) {
+      return null;
+    }
+    try {
+      return JSON.parse(text) as unknown;
+    } catch {
+      return text;
+    }
+  } catch {
+    return null;
+  }
+}
 
 function tokenCacheKey(env: WayfairEnv, clientId: string) {
   return `${env}:${clientId}`;
@@ -62,28 +101,127 @@ async function fetchWayfairToken(input: {
   clientSecret: string;
   audience: string;
 }): Promise<WayfairAuthToken> {
-  const response = await fetch("https://sso.auth.wayfair.com/oauth/token", {
+  const url = "https://sso.auth.wayfair.com/oauth/token";
+  const normalized = {
+    clientId: normalizeCredential(input.clientId, "no-whitespace"),
+    clientSecret: normalizeCredential(input.clientSecret, "no-whitespace"),
+    audience: normalizeCredential(input.audience, "trim")
+  };
+  const requestPayload = {
+    grant_type: "client_credentials",
+    client_id: normalized.clientId,
+    client_secret: normalized.clientSecret,
+    audience: normalized.audience
+  };
+
+  const jsonAttempt = await fetch(url, {
     method: "POST",
     headers: {
-      "Content-Type": "application/x-www-form-urlencoded"
+      "Content-Type": "application/json",
+      Accept: "application/json"
     },
-    body: new URLSearchParams({
-      grant_type: "client_credentials",
-      client_id: input.clientId,
-      client_secret: input.clientSecret,
-      audience: input.audience
-    })
+    body: JSON.stringify(requestPayload)
   });
 
-  if (!response.ok) {
+  if (!jsonAttempt.ok) {
+    const jsonBody = await safeReadBody(jsonAttempt);
+    const isInvalidClient =
+      typeof jsonBody === "object" &&
+      jsonBody !== null &&
+      (jsonBody as { error?: string }).error === "invalid_client";
+
+    const formAttempt = isInvalidClient
+      ? await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded",
+            Accept: "application/json"
+          },
+          body: new URLSearchParams(requestPayload)
+        })
+      : null;
+
+    if (formAttempt && formAttempt.ok) {
+      const payload = (await formAttempt.json()) as {
+        access_token?: string;
+        token_type?: string;
+        expires_in?: number;
+      };
+      if (!payload.access_token || !payload.token_type || !payload.expires_in) {
+        throw new WayfairApiError({
+          code: "WAYFAIR_TOKEN_INVALID",
+          message: "Wayfair token response missing fields"
+        });
+      }
+      const expiresAt = new Date(Date.now() + payload.expires_in * 1000).toISOString();
+      return {
+        accessToken: payload.access_token,
+        tokenType: payload.token_type,
+        expiresAt
+      };
+    }
+
+    const formBody = formAttempt ? await safeReadBody(formAttempt) : null;
+    const debug = {
+      url,
+      method: "POST",
+      env: input.env,
+      credentialHints: {
+        clientIdLength: input.clientId.length,
+        clientSecretLength: input.clientSecret.length,
+        clientIdHasWhitespace: hasWhitespace(input.clientId),
+        clientSecretHasWhitespace: hasWhitespace(input.clientSecret),
+        clientIdNormalizedLength: normalized.clientId.length,
+        clientSecretNormalizedLength: normalized.clientSecret.length,
+        clientIdNormalizedHasWhitespace: hasWhitespace(normalized.clientId),
+        clientSecretNormalizedHasWhitespace: hasWhitespace(normalized.clientSecret)
+      },
+      attempts: [
+        {
+          contentType: "application/json",
+          body: {
+            grant_type: "client_credentials",
+            client_id: maskSecret(normalized.clientId),
+            client_secret: "***",
+            audience: normalized.audience
+          },
+          response: {
+            status: jsonAttempt.status,
+            statusText: jsonAttempt.statusText,
+            body: jsonBody
+          }
+        },
+        formAttempt
+          ? {
+              contentType: "application/x-www-form-urlencoded",
+              body: {
+                grant_type: "client_credentials",
+                client_id: maskSecret(normalized.clientId),
+                client_secret: "***",
+                audience: normalized.audience
+              },
+              response: {
+                status: formAttempt.status,
+                statusText: formAttempt.statusText,
+                body: formBody
+              }
+            }
+          : null
+      ].filter(Boolean)
+    };
+    log({
+      level: "error",
+      message: "Wayfair token request failed",
+      err: debug
+    });
     throw new WayfairApiError({
-      code: `WAYFAIR_TOKEN_${response.status}`,
-      message: `Wayfair token request failed: ${response.status}`,
-      retryable: response.status >= 500 || response.status === 429
+      code: `WAYFAIR_TOKEN_${jsonAttempt.status}`,
+      message: `Wayfair token request failed: ${jsonAttempt.status}\n${JSON.stringify(debug, null, 2)}`,
+      retryable: jsonAttempt.status >= 500 || jsonAttempt.status === 429
     });
   }
 
-  const payload = (await response.json()) as {
+  const payload = (await jsonAttempt.json()) as {
     access_token?: string;
     token_type?: string;
     expires_in?: number;
@@ -109,19 +247,30 @@ export async function getWayfairAccessToken(input: {
   clientSecret: string;
   audience: string;
 }): Promise<WayfairAuthToken> {
-  const cacheKey = tokenCacheKey(input.env, input.clientId);
+  const normalizedClientId = normalizeCredential(input.clientId, "no-whitespace");
+  const normalizedClientSecret = normalizeCredential(input.clientSecret, "no-whitespace");
+  const normalizedAudience = normalizeCredential(input.audience, "trim");
+
+  if (!normalizedClientId || !normalizedClientSecret || !normalizedAudience) {
+    throw new WayfairApiError({
+      code: "WAYFAIR_CREDENTIALS_INVALID",
+      message: "Wayfair 凭据无效：clientId/clientSecret/audience 不能为空（已自动去除空白字符后仍为空）"
+    });
+  }
+
+  const cacheKey = tokenCacheKey(input.env, normalizedClientId);
   const cached = tokenCache.get(cacheKey);
   if (cached && !isExpiringSoon(cached.expiresAt)) {
     return cached;
   }
   const disk = readTokenFromDisk(input.env);
-  if (disk && disk.clientId === input.clientId && !isExpiringSoon(disk.expiresAt)) {
+  if (disk && disk.clientId === normalizedClientId && !isExpiringSoon(disk.expiresAt)) {
     tokenCache.set(cacheKey, disk);
     return disk;
   }
 
   const fresh = await fetchWayfairToken(input);
-  const stored: WayfairTokenCache = { ...fresh, clientId: input.clientId };
+  const stored: WayfairTokenCache = { ...fresh, clientId: normalizedClientId };
   tokenCache.set(cacheKey, stored);
   writeTokenToDisk(input.env, stored);
   return stored;

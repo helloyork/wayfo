@@ -2,6 +2,8 @@ import Link from "next/link";
 import { fetchJson } from "../../lib/api";
 import { ProductGrid } from "../components/ProductGrid";
 
+export const dynamic = "force-dynamic";
+
 type Run = {
   id: string;
   amazonUrl: string;

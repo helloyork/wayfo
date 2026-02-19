@@ -4,10 +4,16 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { apiBase } from "../../lib/api";
 
-export function CreateRunForm() {
+export function CreateRunForm({
+  initialMarketContext,
+  onMarketContextChange
+}: {
+  initialMarketContext?: string;
+  onMarketContextChange?: (value: string) => void;
+}) {
   const router = useRouter();
   const [amazonUrl, setAmazonUrl] = useState("");
-  const [marketContext, setMarketContext] = useState("");
+  const [marketContext, setMarketContext] = useState(initialMarketContext ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,8 +60,11 @@ export function CreateRunForm() {
           <input
             className="input"
             value={marketContext}
-            onChange={(event) => setMarketContext(event.target.value)}
-            placeholder="US / EU / JP"
+            onChange={(event) => {
+              setMarketContext(event.target.value);
+              onMarketContextChange?.(event.target.value);
+            }}
+            placeholder='{"locale":"en-US","country":"UNITED_STATES","brand":"WAYFAIR"}'
           />
         </label>
       </div>

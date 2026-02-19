@@ -4,9 +4,13 @@ import {
   getAppSettings,
   getHasDataApiKey,
   getHasDataSettingsMeta,
-  getWayfairSettings,
+  getOpenAiApiKey,
+  getOpenAiSettingsMeta,
+  getWayfairActiveSettings,
+  getWayfairSettingsAll,
   setAppSettings,
   setHasDataApiKey,
+  setOpenAiApiKey,
   setWayfairSettings
 } from "../../core/store/settingsStore";
 import { validateHasDataApiKey } from "../../connectors/hasdata";
@@ -29,6 +33,10 @@ const wayfairSettingsSchema = z.object({
   clientSecret: z.string().min(1),
   audience: z.string().min(1),
   supplierId: z.string().min(1)
+});
+
+const openAiSettingsSchema = z.object({
+  apiKey: z.string().min(1)
 });
 
 function maskApiKey(apiKey: string) {
@@ -84,6 +92,58 @@ settingsRouter.post("/hasdata/validate", async (req, res) => {
   }
 });
 
+settingsRouter.get("/openai", (_req, res) => {
+  const apiKey = getOpenAiApiKey();
+  const meta = getOpenAiSettingsMeta();
+  res.json({
+    hasKey: Boolean(apiKey),
+    maskedKey: apiKey ? maskApiKey(apiKey) : null,
+    updatedAt: meta?.updatedAt ?? null
+  });
+});
+
+settingsRouter.post("/openai", (req, res) => {
+  const parsed = openAiSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "apiKey is required"
+    });
+  }
+  setOpenAiApiKey(parsed.data.apiKey.trim());
+  res.json({ ok: true });
+});
+
+settingsRouter.post("/openai/validate", async (req, res) => {
+  const parsed = openAiSettingsSchema.safeParse(req.body);
+  const apiKey = parsed.success ? parsed.data.apiKey.trim() : getOpenAiApiKey();
+  if (!apiKey) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "apiKey is required"
+    });
+  }
+  try {
+    const response = await fetch("https://api.openai.com/v1/models", {
+      headers: {
+        Authorization: `Bearer ${apiKey}`
+      }
+    });
+    if (!response.ok) {
+      throw new Error(`OpenAI 验证失败: ${response.status}`);
+    }
+    if (parsed.success) {
+      setOpenAiApiKey(apiKey);
+    }
+    res.json({ ok: true });
+  } catch (error) {
+    sendError(res, {
+      code: "OPENAI_VALIDATE_FAILED",
+      message: error instanceof Error ? error.message : "OpenAI validation failed"
+    });
+  }
+});
+
 settingsRouter.get("/app", (_req, res) => {
   res.json(getAppSettings());
 });
@@ -104,15 +164,29 @@ settingsRouter.post("/app", (req, res) => {
 });
 
 settingsRouter.get("/wayfair", (_req, res) => {
-  const settings = getWayfairSettings();
+  const all = getWayfairSettingsAll();
+  const active = getWayfairActiveSettings();
+  const sandbox = all?.sandbox ?? null;
+  const prod = all?.prod ?? null;
   res.json({
-    hasCredentials: Boolean(settings?.clientId && settings?.clientSecret),
-    maskedClientId: settings?.clientId ? maskApiKey(settings.clientId) : null,
-    maskedClientSecret: settings?.clientSecret ? maskApiKey(settings.clientSecret) : null,
-    env: settings?.env ?? null,
-    audience: settings?.audience ?? null,
-    supplierId: settings?.supplierId ?? null,
-    updatedAt: settings?.updatedAt ?? null
+    activeEnv: all?.activeEnv ?? null,
+    activeHasCredentials: Boolean(active?.clientId && active?.clientSecret),
+    sandbox: {
+      hasCredentials: Boolean(sandbox?.clientId && sandbox?.clientSecret),
+      maskedClientId: sandbox?.clientId ? maskApiKey(sandbox.clientId) : null,
+      maskedClientSecret: sandbox?.clientSecret ? maskApiKey(sandbox.clientSecret) : null,
+      audience: sandbox?.audience ?? null,
+      supplierId: sandbox?.supplierId ?? null,
+      updatedAt: sandbox?.updatedAt ?? null
+    },
+    prod: {
+      hasCredentials: Boolean(prod?.clientId && prod?.clientSecret),
+      maskedClientId: prod?.clientId ? maskApiKey(prod.clientId) : null,
+      maskedClientSecret: prod?.clientSecret ? maskApiKey(prod.clientSecret) : null,
+      audience: prod?.audience ?? null,
+      supplierId: prod?.supplierId ?? null,
+      updatedAt: prod?.updatedAt ?? null
+    }
   });
 });
 
@@ -136,9 +210,7 @@ settingsRouter.post("/wayfair", (req, res) => {
 
 settingsRouter.post("/wayfair/validate", async (req, res) => {
   const parsed = wayfairSettingsSchema.safeParse(req.body);
-  const settings = parsed.success
-    ? parsed.data
-    : getWayfairSettings();
+  const settings = parsed.success ? parsed.data : getWayfairActiveSettings();
   if (!settings) {
     return sendError(res, {
       code: "INVALID_INPUT",

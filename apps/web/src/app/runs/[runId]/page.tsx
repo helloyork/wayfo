@@ -4,6 +4,8 @@ import { RunEventStream } from "../../components/RunEventStream";
 import { ReviewQueue } from "../../components/ReviewQueue";
 import { StepOverview } from "../../components/StepOverview";
 
+export const dynamic = "force-dynamic";
+
 type RunDetail = {
   run: {
     id: string;

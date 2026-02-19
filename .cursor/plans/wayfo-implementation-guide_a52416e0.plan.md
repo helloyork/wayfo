@@ -19,10 +19,10 @@ todos:
     status: completed
   - id: wayfair_taxonomy_init
     content: 实现 taxonomy 初始化门禁：按 env+poolId+marketContext 拉取 taxonomyCategories，构建 documents.jsonl、LangChain 本地向量库与 BM25 索引；缓存 1 个月；支持后台刷新与双版本切换。
-    status: pending
+    status: completed
   - id: amazon_connector
     content: 实现基于 HasData 的 Amazon 商品采集 + 缓存落盘（按 ASIN 幂等）+ 变体枚举可配置（默认关闭）+ 失败降级/人审闭环。
-    status: pending
+    status: completed
   - id: product_embedding
     content: Run 内构造产品检索文本并创建 embedding（落盘），供分类混合搜索与证据展示复用。
     status: pending

@@ -2,6 +2,8 @@ import Link from "next/link";
 import { fetchJson } from "../../../lib/api";
 import { ProductDetail } from "../../components/ProductDetail";
 
+export const dynamic = "force-dynamic";
+
 type Run = {
   id: string;
   amazonUrl: string;

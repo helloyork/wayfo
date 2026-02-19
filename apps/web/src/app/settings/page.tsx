@@ -1,4 +1,6 @@
 import { HasDataSettings } from "../components/HasDataSettings";
+import { OpenAiSettings } from "../components/OpenAiSettings";
+import { WayfairSettings } from "../components/WayfairSettings";
 import { RunDefaultsSettings } from "../components/RunDefaultsSettings";
 
 export default function SettingsPage() {
@@ -10,6 +12,8 @@ export default function SettingsPage() {
       </div>
       <div className="grid-2">
         <HasDataSettings />
+        <OpenAiSettings />
+        <WayfairSettings />
         <RunDefaultsSettings />
       </div>
     </div>

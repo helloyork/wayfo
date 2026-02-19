@@ -9,7 +9,7 @@ import {
   updateJob,
   updateRun
 } from "../core/store/runStore";
-import { getHasDataApiKey } from "../core/store/settingsStore";
+import { getHasDataApiKey, getWayfairActiveSettings } from "../core/store/settingsStore";
 import { extractAsin, normalizeAmazonDomain } from "../core/amazon/asin";
 import {
   amazonProductSchemaVersion,
@@ -18,6 +18,8 @@ import {
   type AmazonProductSnapshot
 } from "../core/amazon/normalize";
 import { readGlobalCache, readRunCache, writeGlobalCache } from "../core/amazon/cache";
+import { getWayfairPoolId } from "../core/config";
+import { ensureTaxonomyCache, parseMarketContext } from "../core/wayfair/taxonomyInit";
 import {
   HasDataError,
   scrapeAmazonProduct
@@ -42,6 +44,11 @@ export async function startRun(run: Run) {
     data: { status: initializing.status },
     timestamp: new Date().toISOString()
   });
+
+  const initOk = await runInitializationGate(run);
+  if (!initOk) {
+    return;
+  }
 
   const updated = updateRun(run.id, { status: "RUNNING", currentStep: undefined });
   emit({
@@ -72,6 +79,86 @@ export async function startRun(run: Run) {
     timestamp: new Date().toISOString()
   });
   log({ level: "info", runId: run.id, message: "Run completed" });
+}
+
+async function runInitializationGate(run: Run) {
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    markNeedsReview(
+      run.id,
+      "缺少 Wayfair 凭据，请先在设置页配置并验证。",
+      undefined,
+      "WAITING_FOR_REVIEW"
+    );
+    return false;
+  }
+  const marketContext = parseMarketContext(run.marketContext);
+  if (!marketContext) {
+    markNeedsReview(
+      run.id,
+      "缺少 marketContext，请在创建 Run 时提供。",
+      "示例：{\"locale\":\"en-US\",\"country\":\"UNITED_STATES\",\"brand\":\"WAYFAIR\"}",
+      "WAITING_FOR_REVIEW"
+    );
+    return false;
+  }
+
+  emit({
+    id: nanoid(),
+    type: "RUN_PROGRESS",
+    runId: run.id,
+    message: "Taxonomy 初始化中...",
+    timestamp: new Date().toISOString()
+  });
+
+  try {
+    const result = await ensureTaxonomyCache({
+      poolId: getWayfairPoolId(),
+      marketContext,
+      credentials: {
+        env: settings.env,
+        clientId: settings.clientId.trim(),
+        clientSecret: settings.clientSecret.trim(),
+        audience: settings.audience.trim()
+      }
+    });
+    createArtifact({
+      runId: run.id,
+      type: "wayfair/taxonomy/ref",
+      relativePath: "wayfair/taxonomyRef.json",
+      content: {
+        env: result.meta.env,
+        poolId: result.meta.poolId,
+        marketContext: result.meta.marketContext,
+        marketContextHash: result.meta.marketContextHash,
+        version: result.meta.activeVersion,
+        initializedAt: result.meta.initializedAt,
+        expiresAt: result.meta.expiresAt,
+        status: result.status
+      }
+    });
+    emit({
+      id: nanoid(),
+      type: "RUN_PROGRESS",
+      runId: run.id,
+      message:
+        result.status === "rebuilt"
+          ? "Taxonomy 初始化完成"
+          : result.status === "stale"
+            ? "Taxonomy 已过期，已在后台刷新"
+            : "Taxonomy 已就绪",
+      timestamp: new Date().toISOString()
+    });
+    return true;
+  } catch (error) {
+    markNeedsReview(
+      run.id,
+      error instanceof Error ? error.message : "Taxonomy 初始化失败",
+      undefined,
+      "NEEDS_REVIEW"
+    );
+    return false;
+  }
 }
 
 async function runStep(run: Run, step: Step) {

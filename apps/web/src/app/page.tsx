@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { CreateRunForm } from "./components/CreateRunForm";
+import { RunEntryGate } from "./components/RunEntryGate";
 import { DashboardStats } from "./components/DashboardStats";
 import { ReviewQueue } from "./components/ReviewQueue";
 import { RunList } from "./components/RunList";
-import { StepOverview } from "./components/StepOverview";
 import { fetchJson } from "../lib/api";
+
+export const dynamic = "force-dynamic";
 
 type Run = {
   id: string;
@@ -55,7 +56,7 @@ export default async function HomePage() {
         ]}
       />
 
-      <CreateRunForm />
+      <RunEntryGate />
       <ReviewQueue items={reviewItems} />
       <RunList runs={runs} title="最近 Runs" />
     </div>

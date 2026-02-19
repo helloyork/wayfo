@@ -10,12 +10,17 @@
     "lint": "tsc -p tsconfig.json --noEmit && eslint \"src/**/*.ts\""
   },
   "dependencies": {
+    "@langchain/community": "^1.1.16",
+    "@langchain/core": "^1.1.26",
+    "@langchain/openai": "^1.2.8",
     "@types/better-sqlite3": "^7.6.13",
     "@wayfo/shared": "0.1.0",
     "better-sqlite3": "^12.4.1",
     "cors": "^2.8.5",
     "express": "^4.21.2",
+    "hnswlib-node": "^3.0.0",
     "nanoid": "^5.1.5",
+    "openai": "^6.22.0",
     "zod": "^4.1.5"
   },
   "devDependencies": {
