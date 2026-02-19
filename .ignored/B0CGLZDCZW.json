@@ -1,0 +1,496 @@
+{
+    "requestMetadata": {
+      "id": "d0dd77dd-7e00-4705-8beb-b1f2cb741085",
+      "status": "ok",
+      "html": "https://files.hasdata.com/d0dd77dd-7e00-4705-8beb-b1f2cb741085.html",
+      "json": "https://files.hasdata.com/d0dd77dd-7e00-4705-8beb-b1f2cb741085.json",
+      "url": "https://www.amazon.com/dp/B0CGLZDCZW"
+    },
+    "product": {
+      "asin": "B0CGLZDCZW",
+      "url": "https://www.amazon.com/dp/B0CGLZDCZW",
+      "title": "Silicone Coasters for Drinks[4 Pack]- Cup Mat for Tabletop Protection-Non-Slip, Non-Stick, Coffee Table Decor, Great Gift for Any Occasion, Black",
+      "brand": "Wingcases",
+      "isAvailable": true,
+      "primaryFeatures": {
+        "color": "Black",
+        "size": "4×3.9Inches"
+      },
+      "features": {
+        "color": "Black",
+        "material": "Silicone",
+        "brand": "Wingcases",
+        "shape": "Round",
+        "productCareInstructions": "Hand Wash Only, Machine Wash"
+      },
+      "featureBullets": [
+        "RESISTANT AND REUSABLE: Made of durable silicone material, it can be used multiple times without wearing out or breaking.",
+        "DIAMOND PATTERN DESIGN: Featuring a beautiful diamond pattern, providing a stylish and high-end look for your drink coasters.",
+        "NON -SLIP , NON- STICK AND EASILY TO CLEAN: Provides anti-slip function without sticking to the surface, ensuring your cups stay securely in place while being easy to clean. It Can be cleaned in the dishwasher",
+        "FUNCTIONAL COASTERS: Reverses to function as a cup lids",
+        "SUITABLE FOR HOT OR COLD DRINKS : Designed with thickness to accommodate both hot and cold beverages, protecting your tabletop from water , stains, and temperature effects."
+      ],
+      "boughtInPastMonth": "300+",
+      "badges": {
+        "amazonChoice": true,
+        "amazonExclusive": false,
+        "amazonPrime": true,
+        "bestSeller": false,
+        "limitedTimeDeal": false
+      },
+      "breadcrumbs": [
+        "Home & Kitchen",
+        "Kitchen & Dining",
+        "Dining & Entertaining",
+        "Bar Tools & Drinkware",
+        "Bar Tools",
+        "Coasters"
+      ],
+      "variants": [
+        {
+          "asin": "B0CLGYQZGF",
+          "title": "Light Blue 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CLGYQZGF",
+          "imageUrl": "https://m.media-amazon.com/images/I/71g-oDCr9aL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZ74TV",
+          "title": "Black 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZ74TV",
+          "imageUrl": "https://m.media-amazon.com/images/I/71-VIzHmM3L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0FQB57FSP",
+          "title": "Olive Green 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0FQB57FSP",
+          "imageUrl": "https://m.media-amazon.com/images/I/71kNUJtNjOL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0F1DLTY96",
+          "title": "Soft Pink 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0F1DLTY96",
+          "imageUrl": "https://m.media-amazon.com/images/I/71DYlrqbZ6L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZPRBQ",
+          "title": "Semi Transparent 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZPRBQ",
+          "imageUrl": "https://m.media-amazon.com/images/I/71qJWs+Y1TL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0F1DJPNG7",
+          "title": "Sage Green 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0F1DJPNG7",
+          "imageUrl": "https://m.media-amazon.com/images/I/51UnFx-JB+L._AC_SL1000_.jpg"
+        },
+        {
+          "asin": "B0CGLZDCZW",
+          "title": "Black 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGLZDCZW",
+          "imageUrl": "https://m.media-amazon.com/images/I/71fTfihE7fL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CLH1DSPL",
+          "title": "Red 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CLH1DSPL",
+          "imageUrl": "https://m.media-amazon.com/images/I/71+wILk1fIL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRMNQN1",
+          "title": "Dark Grey 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRMNQN1",
+          "imageUrl": "https://m.media-amazon.com/images/I/71QTiw1UiWL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRM3P6L",
+          "title": "Translucent 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRM3P6L",
+          "imageUrl": "https://m.media-amazon.com/images/I/61FXjfaPSjL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0F1DN3NZC",
+          "title": "Sage Green 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0F1DN3NZC",
+          "imageUrl": "https://m.media-amazon.com/images/I/71QKqayevBL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CBRR923S",
+          "title": "Translucent 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CBRR923S",
+          "imageUrl": "https://m.media-amazon.com/images/I/61+ntyBEvZL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0C5D5GHJW",
+          "title": "Dark Grey 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0C5D5GHJW",
+          "imageUrl": "https://m.media-amazon.com/images/I/71N7eCZtCDL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRM4FRK",
+          "title": "Black 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRM4FRK",
+          "imageUrl": "https://m.media-amazon.com/images/I/71Q9Ih3-B8L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZYHBX",
+          "title": "Red 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZYHBX",
+          "imageUrl": "https://m.media-amazon.com/images/I/71fWMstKXiL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRNHQD3",
+          "title": "Pink 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRNHQD3",
+          "imageUrl": "https://m.media-amazon.com/images/I/71OHCIJjPxL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRMB999",
+          "title": "Red 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRMB999",
+          "imageUrl": "https://m.media-amazon.com/images/I/71X3Z4AC71L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CLH19V4X",
+          "title": "Pink 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CLH19V4X",
+          "imageUrl": "https://m.media-amazon.com/images/I/71AlSQA0jWL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZWF7X",
+          "title": "Dark Blue 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZWF7X",
+          "imageUrl": "https://m.media-amazon.com/images/I/71prU8R2xZL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZ9S2D",
+          "title": "Light Blue 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZ9S2D",
+          "imageUrl": "https://m.media-amazon.com/images/I/71i59uqdcdL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CBRSPDK5",
+          "title": "Dark Blue 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CBRSPDK5",
+          "imageUrl": "https://m.media-amazon.com/images/I/711MAArm0bL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRQGDNF",
+          "title": "Dark Blue 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRQGDNF",
+          "imageUrl": "https://m.media-amazon.com/images/I/71BrDL6Jn9L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQZZ246",
+          "title": "Dark Grey 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQZZ246",
+          "imageUrl": "https://m.media-amazon.com/images/I/71smlFO6R9L._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CGRNY4N8",
+          "title": "Light Blue 6×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CGRNY4N8",
+          "imageUrl": "https://m.media-amazon.com/images/I/71GpMgGY5EL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0CJQYF3QJ",
+          "title": "Pink 8×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0CJQYF3QJ",
+          "imageUrl": "https://m.media-amazon.com/images/I/71umR8bIebL._AC_SL1500_.jpg"
+        },
+        {
+          "asin": "B0F1DHTP45",
+          "title": "Soft Pink 4×3.9Inches",
+          "url": "https://www.amazon.com/dp/B0F1DHTP45",
+          "imageUrl": "https://m.media-amazon.com/images/I/51JylH2MNBL._AC_SL1000_.jpg"
+        }
+      ],
+      "price": {
+        "symbol": "$",
+        "currentPrice": 5.99,
+        "beforePrice": 6.99,
+        "discount": "-14%"
+      },
+      "deliveryRawDate": "Monday, February 23",
+      "deliveryIsoDate": "2026-02-23T00:00:00.000Z",
+      "returns": "FREE 30-day refund/replacement",
+      "seller": "GuMan",
+      "sellerUrl": "https://www.amazon.com/sp?seller=AQH6T26TJ1TPZ",
+      "shipper": "Amazon",
+      "totalImages": 6,
+      "primaryImage": "https://m.media-amazon.com/images/I/71fTfihE7fL._AC_SL1500_.jpg",
+      "images": [
+        "https://m.media-amazon.com/images/I/71fTfihE7fL._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/71pCffrccIL._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/81ypQ9GtueL._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/8164e-ZbthL._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/816dwfEHzsL._AC_SL1500_.jpg",
+        "https://m.media-amazon.com/images/I/718UXW3D+IL._AC_SL1500_.jpg"
+      ],
+      "descriptionImages": [
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8037a902-6c77-4102-bb6f-c09434e6dacf.__CR0,0,4000,2474_PT0_SX970_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/b0864743-ce61-48d0-ba18-3a1f0f3a92c0.__CR0,0,2100,2800_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/abbc01d8-0fdd-4e8c-8a57-ca4edceb5bcb.__CR0,0,3000,1500_PT0_SX350_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/8650deab-816f-42ad-b6d2-ac402f8c7a2a.__CR0,0,3000,3000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/5c8ebe9b-e09f-447d-b139-8d8f3ea94b4c.__CR0,0,3000,3000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/03dc7814-06ba-454a-b968-7e4fcedff756.__CR0,177,1000,1000_PT0_SX300_V1___.jpg",
+        "https://m.media-amazon.com/images/S/aplus-media-library-service-media/354fe138-b241-4264-a068-75fe5731aed7.__CR0,0,1940,1200_PT0_SX970_V1___.jpg"
+      ],
+      "totalVideos": 5,
+      "primaryVideo": "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/cc1fb5ba-1f3d-4fad-bfae-3f323b59becf.mp4/productVideoOptimized.mp4",
+      "videos": [
+        "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/cc1fb5ba-1f3d-4fad-bfae-3f323b59becf.mp4/productVideoOptimized.mp4",
+        "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/06bb6836-dadb-4838-afde-34d3399a38b0.mp4/productVideoOptimized.mp4",
+        "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/6b67759b-18a3-41a3-9553-045516a7194b.mp4/productVideoOptimized.mp4",
+        "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/286ed987-b972-4907-8e5e-f344f77ede10.mp4/productVideoOptimized.mp4",
+        "https://m.media-amazon.com/images/S/al-na-9d5791cf-3faf/5007ea16-793c-4d38-a1f5-0c3a7365787d.mp4/productVideoOptimized.mp4"
+      ],
+      "specification": [
+        {
+          "key": "Color",
+          "value": "Black"
+        },
+        {
+          "key": "Material",
+          "value": "Silicone"
+        },
+        {
+          "key": "Brand",
+          "value": "Wingcases"
+        },
+        {
+          "key": "Shape",
+          "value": "Round"
+        },
+        {
+          "key": "Product Care Instructions",
+          "value": "Hand Wash Only, Machine Wash"
+        },
+        {
+          "key": "Is Dishwasher Safe",
+          "value": "Yes"
+        },
+        {
+          "key": "Product Dimensions",
+          "value": "3.9\"L x 3.9\"W"
+        },
+        {
+          "key": "Manufacturer",
+          "value": "Wingcases"
+        },
+        {
+          "key": "Number of Items",
+          "value": "4"
+        },
+        {
+          "key": "Item Weight",
+          "value": "3.17 ounces"
+        },
+        {
+          "key": "ASIN",
+          "value": "B0CGLZDCZW"
+        },
+        {
+          "key": "Item model number",
+          "value": "4h"
+        },
+        {
+          "key": "Best Sellers Rank",
+          "value": "#9,540 in Kitchen & Dining (See Top 100 in Kitchen & Dining) #33 in Bar Coasters"
+        },
+        {
+          "key": "Assembly required",
+          "value": "No"
+        },
+        {
+          "key": "Number of pieces",
+          "value": "4"
+        },
+        {
+          "key": "Warranty Description",
+          "value": "30 days free return."
+        },
+        {
+          "key": "Batteries required",
+          "value": "No"
+        }
+      ],
+      "reviewsInfo": {
+        "totalReviews": 1193,
+        "rating": 4.6,
+        "starRates": {
+          "fiveStars": "77%",
+          "fourStars": "13%",
+          "threeStars": "6%",
+          "twoStars": "2%",
+          "oneStars": "2%"
+        },
+        "customersSay": "Customers find these coasters to be of good quality, with a subtle accent design and multiple uses. They effectively protect furniture and are easy to clean, with one customer mentioning they can be put in the dishwasher. Customers like the color options and water resistance, with one noting they catch drips well. The coasters' sturdiness and slip resistance receive mixed feedback - while some find them sturdy and non-slip, others describe them as flimsy and not prone to sliding.",
+        "aspects": [
+          {
+            "aspect": "Quality",
+            "count": 51,
+            "status": "positive"
+          },
+          {
+            "aspect": "Design",
+            "count": 29,
+            "status": "positive"
+          },
+          {
+            "aspect": "Functionality",
+            "count": 25,
+            "status": "positive"
+          },
+          {
+            "aspect": "Ease of cleaning",
+            "count": 23,
+            "status": "positive"
+          },
+          {
+            "aspect": "Color options",
+            "count": 20,
+            "status": "positive"
+          },
+          {
+            "aspect": "Water resistance",
+            "count": 17,
+            "status": "positive"
+          },
+          {
+            "aspect": "Sturdiness",
+            "count": 21,
+            "status": "mixed"
+          },
+          {
+            "aspect": "Slip resistance",
+            "count": 16,
+            "status": "mixed"
+          }
+        ],
+        "customersImageUrls": [
+          "https://m.media-amazon.com/images/I/51XKTKS61tL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71gEU4LDugL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71zs5NrCv-L._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/51OB2K2e7fL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/61+HxsLLFXL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71YE+iYBc0L._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71Tu91JB1BL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71pLTUQp8wL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71P0B-muC4L._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71hzVawDcxL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/51gtVlL2vSL._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews",
+          "https://m.media-amazon.com/images/I/71AQBH--z-L._AC_UC308,308_CACC,308,308_QL80_.jpg?aicid=community-reviews"
+        ],
+        "reviews": [
+          {
+            "reviewTitle": "Silicone coasters",
+            "reviewText": "Light weight, they are durable and great quality and great price 👍",
+            "reviewDate": "Reviewed in the United States on February 5, 2026",
+            "customer": "Amazon Customer",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AHFKLLQQXPLXCPAVKBDGTXCEJ7XA",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Affordable",
+            "reviewText": "I like these silicone coasters. They are a good size and they look very simple and elegant. They have a rim or lip around them to contain pooling moisture. They are also affordable and inexpensive. You get a choice in colors. I got the deep gray ones. They look good and are very helpful.",
+            "reviewDate": "Reviewed in the United States on October 9, 2025",
+            "customer": "K Payne",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AH37GV457G6QUJKJB43TMHCBIFKA",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Drink holder",
+            "reviewText": "Great cup holders has a good grip, for preventing drink from sliding.",
+            "reviewDate": "Reviewed in the United States on February 15, 2026",
+            "customer": "Amazon Customer",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AFSNZ5L5NNUXN3GTFR5HZDAP6SQQ",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Floppy",
+            "reviewText": "I thought these would be like others we have, pretty sturdy and rigid, but they're more like silicone potholders. Like wobbly flimsy. They also don't slide across a table, they stick to it. So if you want to reposition your cup, you have to lift the coaster and move it. Ain't nobody got time for that. But the color was right on, they catch condensation and do their job, so it's all good.",
+            "reviewDate": "Reviewed in the United States on August 27, 2024",
+            "customer": "Ryan Dawson",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AFBBOQNL4DP4C2O5QPPBXX6FZC6Q",
+            "customerStarsRating": 4,
+            "productSpecs": {
+              "color": "Dark Blue",
+              "size": "6×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Coasters",
+            "reviewText": "These are perfect for my needs. Glass tends to sweat here in Florida and these coasters make a great barrier from my nice wood furniture. Easy to clean as well.",
+            "reviewDate": "Reviewed in the United States on February 12, 2026",
+            "customer": "Sue Qualls",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AGSIYFVHILSSAXQB5J2IHQ26BKCQ",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Couldn't be better",
+            "reviewText": "They look nice, do their job, and are extremely easy to clean. They're perfect.",
+            "reviewDate": "Reviewed in the United States on October 27, 2025",
+            "customer": "Meow",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AFQXW3YG7WR52XAJXEFVYCJ2A2TA",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Very good.",
+            "reviewText": "Just what i was looking for. I didn’t want something that would break but just to hold the tea strainer while at the table. These are great and it fits most of my glasses and cups. Good value forever the money. Protects counter tops. Very light.",
+            "reviewDate": "Reviewed in the United States on September 11, 2025",
+            "customer": "Cheryl Grant",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AGHIGV5FFUV3UKGHPBO7BDS3BMBA",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Black",
+              "size": "4×3.9Inches"
+            }
+          },
+          {
+            "reviewTitle": "Very thin but pretty",
+            "reviewText": "Not the best quality coaster, a bit too thin. The edge is thicker than the middle, so the drink wobbles a bit. However, it is very pretty and I like the holder.",
+            "reviewDate": "Reviewed in the United States on July 6, 2024",
+            "customer": "Amazon Customer",
+            "customerProfileUrl": "https://www.amazon.com/gp/profile/amzn1.account.AGWAOWWTW2PQTCQLAPV3IUCG7HYA",
+            "customerStarsRating": 3,
+            "productSpecs": {
+              "color": "Light Blue",
+              "size": "6×3.9Inches"
+            },
+            "helpfulVotes": "2 people found this helpful"
+          },
+          {
+            "reviewTitle": "Wonderful",
+            "reviewText": "Perfect coasters. Because they're silicone they won't stain, crack or fall apart. Textured design drains all moisture away from cup so no drips either. Washable & 6 colors to choose from completes this perfect choice.",
+            "reviewDate": "Reviewed in Canada on December 17, 2025",
+            "customer": "Elayne.",
+            "customerStarsRating": 5,
+            "productSpecs": {
+              "color": "Light Blue",
+              "size": "6×3.9Inches"
+            }
+          }
+        ]
+      }
+    }
+  }

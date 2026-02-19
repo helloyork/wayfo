@@ -48,7 +48,7 @@ export function RunEventStream({ runId }: { runId: string }) {
       <div className="card stack">
         <strong>事件流</strong>
         {events.length === 0 ? (
-          <div className="muted">暂无事件</div>
+          <div className="empty">暂无事件</div>
         ) : (
           events.map((event) => (
             <div key={event.id} className="muted">

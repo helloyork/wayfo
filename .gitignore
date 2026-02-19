@@ -67,5 +67,5 @@ data/
 
 tsconfig.tsbuildinfo
 yarn.lock
-pnp.cjs
+.pnp.cjs
 .pnp.loader.mjs

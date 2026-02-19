@@ -4,7 +4,7 @@ overview: 基于 project/architecture.md 与 Wayfair Catalog/Product Addition Gr
 todos:
   - id: workspace_scaffold
     content: 初始化 monorepo：apps/server（Node API + orchestrator）/apps/web（NextJS UI）/packages/shared（schemas/types）与一键启动 CLI。
-    status: pending
+    status: completed
   - id: core_models_storage
     content: 实现 Run/Job/Artifact 模型、文件系统 artifact store、SQLite 索引、幂等键与断点续跑读取策略。
     status: pending
@@ -21,7 +21,7 @@ todos:
     content: 实现 discovery（taxonomyCategories/questions/brandAssociations/mediaMetaDataTags）→ submit → submissions poll → validationFlaws 解析 → NEEDS_REVIEW → resubmit。
     status: pending
   - id: amazon_connector
-    content: 实现 Amazon Playwright 采集 + 缓存落盘 + 登录可选的人机协同流程。
+    content: 实现基于 HasData 的 Amazon 商品数据采集 + 缓存落盘（按 ASIN 幂等）+ 变体 fan-out 入队 + 失败降级/人审闭环。
     status: pending
   - id: ai_gateway_embeddings_classify
     content: 实现 OpenAI embedding + 本地向量索引 + class 候选检索 + LLM 最终分类（规范化输出与 repair）。
@@ -83,7 +83,7 @@ isProject: false
 ## Orchestrator（工作流编排）
 
 - 状态机步骤（建议初版）：
-  - `SCRAPE_AMAZON`：Playwright 采集（含变体、描述、图片、价格、ASIN）→ `artifacts/amazon/product.json` + 原图缓存
+  - `SCRAPE_AMAZON`：通过 HasData 获取商品快照（先抓 seed ASIN，再将 variants fan-out 为独立采集任务；按 ASIN 幂等缓存）→ `artifacts/amazon/products/<asin>/`** + 原图下载缓存
   - `DIMENSION_ENRICH`：检查尺寸是否齐全；不齐全则走 Supplier Connector（可插拔）补全 → `artifacts/dimensions.json`
   - `WAYFAIR_CLASSIFY`：OpenAI Embedding + 本地向量库检索候选 class（或 taxonomyCategories）+ 高智模型决策 → `artifacts/wayfair/classification.json`
   - `IMAGE_CLASSIFY`：多模态/图片识别将原图归类 primary/dimension/... → `artifacts/images/classification.json`
@@ -98,14 +98,14 @@ isProject: false
 
 ## Pools / Batches（并发与成本）
 
-- BrowserPool（Playwright）：限制 context/page 并发；隔离 session；支持“需要登录时”切换 headed 模式。
+- AmazonDataApiPool：限制并发与速率；统一重试/熔断/预算；对 `429/5xx` 做指数退避，保证成本与稳定性可控。
 - WayfairApiPool：GraphQL QPS 限制（按文档 10 rps discovery；submit 1/s）+ `Retry-After`/指数退避。
 - ModelPool：LLM/embedding 并发与预算控制；记录 cost。
 - ImagePool：图片生成并发与批次（primary/dimension 4 候选一批）。
 
 ## Connectors（可插拔）
 
-- `AmazonConnector`：Playwright 抽取结构化商品信息；对地区/登录限制输出 NEEDS_USER_ACTION 事件。
+- `AmazonConnector`：对接 HasData，把返回规范化为稳定 schema，并对缺失字段/失败输出 NEEDS_REVIEW（让用户修正链接或选择站点）。
 - `WayfairConnector`：
   - token：`POST https://sso.auth.wayfair.com/oauth/token`（client_credentials + audience）
   - GraphQL endpoints：
@@ -152,7 +152,7 @@ isProject: false
 ## 交付里程碑（建议）
 
 - M1：本地服务端 + Next 前端骨架、Run/Job/Artifact/事件流跑通（全 mock）
-- M2：接入 Playwright Amazon 采集（含登录可选的人审/引导）
+- M2：接入 HasData 采集（含变体 fan-out 与按 ASIN 缓存）与失败降级/人审
 - M3：接入 Wayfair token + discovery + submit + poll（sandbox）
 - M4：图片分类/重绘与策略化（provider 可插拔）
 - M5：断点续跑、取消/暂停、成本/限流、审计与完善 UI

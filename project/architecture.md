@@ -24,7 +24,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 - **成本与限流可控**：对浏览器资源、外部 API、模型调用要有并发与预算控制。
 
 ### 非目标（Non-goals）
-- **不以“绕过反爬虫/风控”为目标**：仅在用户授权与合规范围内进行浏览器自动化与数据采集；需要尊重目标站点条款与速率限制。
+- **不以“绕过反爬虫/风控”为目标**：使用合规的第三方数据服务获取公开商品信息，并遵守目标站点条款与速率限制。
 - **不承诺 100% 自动上架**：字段缺失、类目不确定、合规风险（图片/文案/商标）必须交由人工确认。
 
 ---
@@ -49,7 +49,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
   - Scrape / Enrich(Dimension) / Classify / Image / Template / Export / Upload 等具体 worker。
   - 输入与输出都使用统一 schema（见“Agent 输出规范化”）。
 - **连接器层（Connectors）**
-  - **Amazon Connector**：基于浏览器自动化采集页面信息与资源。
+  - **Amazon Connector**：基于 HasData Amazon Product 数据接口获取结构化商品信息与资源链接，并将结果规范化为稳定 schema 与可缓存 artifact。
   - **Wayfair Connector**：模板下载、上架 API 调用、错误解析与重试建议。
   - **Supplier Connector**：尺寸等补全数据源 API。
 - **AI 适配层（AI Gateway）**
@@ -75,8 +75,10 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 ### 建议的本地目录布局（可调）
 - `data/runs/<runId>/run.json`：Run 元信息、当前状态、时间戳、版本、成本汇总
 - `data/runs/<runId>/jobs/<jobId>.json`：Job 状态、重试次数、错误摘要、输入输出引用
-- `data/runs/<runId>/artifacts/amazon/product.json`
-- `data/runs/<runId>/artifacts/amazon/images/original/*`
+- `data/runs/<runId>/artifacts/amazon/products/<asin>/provider/raw.json`：HasData 原始返回（便于回放与排错）
+- `data/runs/<runId>/artifacts/amazon/products/<asin>/product.json`：规范化后的商品快照（稳定 schema）
+- `data/runs/<runId>/artifacts/amazon/products/<asin>/images/index.json`
+- `data/runs/<runId>/artifacts/amazon/products/<asin>/images/original/*`
 - `data/runs/<runId>/artifacts/images/classification.json`
 - `data/runs/<runId>/artifacts/images/generated/<type>/*`
 - `data/runs/<runId>/artifacts/wayfair/template.xlsx`
@@ -93,7 +95,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 ## 池（Pool）与批次（Batch）（工程定义）
 
 ### Pool：受限资源池
-- **Browser Pool**：Puppeteer/Playwright 实例或 BrowserContext 池，限制并发、隔离 cookie/session。
+- **Amazon Data API Pool**：对 HasData 的并发与速率限制（令牌桶/漏桶），并统一做重试、熔断、预算与请求审计。
 - **API Client Pool**：对 Supplier/Embedding/Image/Wayfair API 的并发与速率限制（令牌桶/漏桶）。
 - **Model Call Pool**：对 LLM/多模态调用做并发与预算控制，避免爆量与费用失控。
 
@@ -129,10 +131,50 @@ Wayfo的工作流分为以下几个步骤（含建议补充）：
 
 通过Wayfo前端，用户会向应用提供一个亚马逊产品链接。
 
-Wayfo会默认维护本地目录缓存、浏览器 session（cookie/本地存储）状态和一个 Puppeteer 实例池。
+Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结构化数据。该方案的目标是：**稳定、可维护、可观测**，同时避免在本地维护浏览器自动化与反爬对抗。
 
-接下来，Wayfo会使用在用户授权与合规范围内配置好的Puppeteer实例，访问产品页面，并提取尽可能完整的信息。  
-这包括产品基本信息、变体、详细参数、介绍、所有产品图片和价格等等。所有信息都会使用JSON格式本地缓存。  
+### HasData（唯一数据供应商）
+
+- **模式**：异步 job（提交→拿 `jobId`→poll 或 webhook）
+- **核心接口（示例）**：
+  - `POST https://api.hasdata.com/scrapers/amazon-product/jobs`（返回 `jobId`）
+  - `GET https://api.hasdata.com/scrapers/jobs/:jobId`（状态：`pending`/`in_progress`/`finished`）
+  - `GET https://api.hasdata.com/scrapers/jobs/:jobId/results?page=1&limit=100`（结果分页，`limit<=100`）
+- **用量与并发**：按 plan 限制并发；超过返回 `429`；只对成功请求计费；可用 `GET https://api.hasdata.com/user/me/usage` 查询用量。
+
+### 产物与缓存（按产品 ID/ASIN）
+
+- **产品 ID**：统一使用 `asin` 作为产品 ID（缓存 key 的核心字段之一）
+- **必须落盘**（每个 `asin` 一份）：
+  - `artifacts/amazon/products/<asin>/provider/raw.json`：HasData 原始返回
+  - `artifacts/amazon/products/<asin>/product.json`：规范化后的商品快照（稳定 schema）
+  - `artifacts/amazon/products/<asin>/images/index.json` 与 `images/original/*`
+- **缓存规则（必须）**：
+  - 任意后续任务引用某个 `asin` 时，先检查该 `asin` 的 `product.json` 是否已存在且版本匹配；存在则**禁止再次调用 HasData**。
+  - 如果 Run 内不存在但本地全局缓存（可选实现）存在，则复用全局缓存并在当前 Run 下建立引用/拷贝。
+
+规范化后的 `product.json` 最低字段要求（缺失则进入人审/失败态）：
+- `asin`、`canonicalUrl`
+- `title`、`description`/`bullets`
+- `price`（含 currency）、`availability`
+- `variants`（变体维度 + 每个变体的 `asin`/链接）
+- `productInformation/specs`（键值对）
+- `images`（尽可能包含高清图）
+
+### 变体（Variants）任务模型（必须）
+
+系统需要把“一个 Amazon 链接”扩展为“一组产品任务（父 ASIN + 全部变体 ASIN）”，并将**每个变体视为独立新任务加入队列**：
+
+- `SCRAPE_AMAZON_SEED`：对用户输入链接/ASIN 抓取一次，得到父 `asin` 与 `variants[].asin` 列表
+- `SCRAPE_AMAZON_ASIN`（队列任务）：对每个 `asin`（父 + 变体去重后）分别入队执行采集与落盘
+  - 幂等 key 必须包含：`domain + asin + schemaVersion`（从而严格按产品 ID 缓存）
+  - 任务执行前必须先走“缓存规则”，命中缓存则直接完成
+- 下游步骤（Dimension/Classification/图片流水线/Wayfair）应以 `asin` 为粒度执行，使每个变体都能独立产出、独立审查、独立重试与断点续跑。
+
+### 失败处理与人审介入（必须）
+
+- **可自动重试**：网络抖动、`429`、`5xx`、异步 job 超时（指数退避 + 抖动；并发池限流；必要时熔断）
+- **需要人审/用户操作**：`401`（key 无效）、`404`（下架/区域不支持）、或关键信息缺失（如 `asin/title/images` 缺失）
 
 ### Dimension
 

@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import { runsRouter } from "./routes/runs";
+import { settingsRouter } from "./routes/settings";
 
 export function createServer() {
   const app = express();
@@ -12,6 +13,7 @@ export function createServer() {
   });
 
   app.use("/api/runs", runsRouter);
+  app.use("/api/settings", settingsRouter);
 
   return app;
 }

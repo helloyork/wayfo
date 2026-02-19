@@ -114,3 +114,16 @@ export const AgentResultSchema = z.object({
   errors: z.unknown().optional()
 });
 export type AgentResult = z.infer<typeof AgentResultSchema>;
+
+export type {
+  HasDataAmazonProductResponse,
+  HasDataBadges,
+  HasDataPrice,
+  HasDataProduct,
+  HasDataRequestMetadata,
+  HasDataReview,
+  HasDataReviewAspect,
+  HasDataReviewsInfo,
+  HasDataSpecificationEntry,
+  HasDataVariant
+} from "./hasdata";
