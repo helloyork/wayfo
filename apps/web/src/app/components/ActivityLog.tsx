@@ -10,7 +10,7 @@ export function ActivityLog({ items }: { items: ActivityItem[] }) {
     <div className="card stack">
       <div className="row">
         <strong>日志与事件</strong>
-        <span className="muted">结构化日志占位</span>
+        <span className="muted">结构化日志</span>
       </div>
       {items.length === 0 ? (
         <div className="empty">暂无日志</div>

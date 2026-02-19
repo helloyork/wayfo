@@ -9,7 +9,7 @@ export function ReviewQueue({ items }: { items: ReviewItem[] }) {
     <div className="card stack">
       <div className="row">
         <strong>待审查</strong>
-        <span className="muted">人工确认入口占位</span>
+        <span className="muted">人工确认入口</span>
       </div>
       {items.length === 0 ? (
         <div className="empty">暂无待审查项</div>

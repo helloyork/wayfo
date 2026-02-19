@@ -1,12 +1,22 @@
 import { Router } from "express";
 import { z } from "zod";
-import { getHasDataApiKey, getHasDataSettingsMeta, setHasDataApiKey } from "../../core/store/settingsStore";
+import {
+  getAppSettings,
+  getHasDataApiKey,
+  getHasDataSettingsMeta,
+  setAppSettings,
+  setHasDataApiKey
+} from "../../core/store/settingsStore";
 import { validateHasDataApiKey } from "../../connectors/hasdata";
 
 export const settingsRouter = Router();
 
 const hasDataKeySchema = z.object({
   apiKey: z.string().min(8)
+});
+
+const appSettingsSchema = z.object({
+  enumerateVariantsDefault: z.boolean()
 });
 
 function maskApiKey(apiKey: string) {
@@ -56,4 +66,21 @@ settingsRouter.post("/hasdata/validate", async (req, res) => {
       message: error instanceof Error ? error.message : "HasData validation failed"
     });
   }
+});
+
+settingsRouter.get("/app", (_req, res) => {
+  res.json(getAppSettings());
+});
+
+settingsRouter.post("/app", (req, res) => {
+  const parsed = appSettingsSchema.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ message: "enumerateVariantsDefault must be boolean" });
+    return;
+  }
+  const next = setAppSettings(parsed.data);
+  res.json({
+    enumerateVariantsDefault: next.enumerateVariantsDefault,
+    updatedAt: next.updatedAt
+  });
 });

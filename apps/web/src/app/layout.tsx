@@ -17,6 +17,7 @@ export default function RootLayout({ children }: { children: ReactNode }) {
             <nav className="row muted">
               <Link href="/">Dashboard</Link>
               <Link href="/runs">Runs</Link>
+              <Link href="/products">产品预览</Link>
               <Link href="/settings">设置</Link>
             </nav>
           </header>

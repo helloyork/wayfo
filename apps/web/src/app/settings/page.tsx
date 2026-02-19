@@ -1,4 +1,5 @@
 import { HasDataSettings } from "../components/HasDataSettings";
+import { RunDefaultsSettings } from "../components/RunDefaultsSettings";
 
 export default function SettingsPage() {
   return (
@@ -9,19 +10,15 @@ export default function SettingsPage() {
       </div>
       <div className="grid-2">
         <HasDataSettings />
-        <div className="card stack">
-          <strong>连接器配置</strong>
-          <div className="muted">占位：Amazon / Wayfair / Supplier</div>
-          <div className="empty">请在此处配置连接器开关与限流。</div>
-        </div>
+        <RunDefaultsSettings />
         <div className="card stack">
           <strong>AI Gateway</strong>
-          <div className="muted">占位：模型路由、预算与重试</div>
+          <div className="muted">模型路由、预算与重试</div>
           <div className="empty">请在此处配置模型与成本上限。</div>
         </div>
         <div className="card stack">
           <strong>存储与日志</strong>
-          <div className="muted">占位：artifact 路径与日志等级</div>
+          <div className="muted">artifact 路径与日志等级</div>
           <div className="empty">请在此处配置本地存储与日志输出。</div>
         </div>
       </div>

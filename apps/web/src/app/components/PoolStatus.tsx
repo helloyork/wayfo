@@ -9,7 +9,7 @@ export function PoolStatus({ items }: { items: PoolItem[] }) {
     <div className="card stack">
       <div className="row">
         <strong>资源池与批次</strong>
-        <span className="muted">并发与成本控制占位</span>
+        <span className="muted">并发与成本控制</span>
       </div>
       {items.length === 0 ? (
         <div className="empty">暂无池/批次信息</div>

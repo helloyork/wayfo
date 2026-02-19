@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import { Run, RunEvent, Step, HasDataAmazonProductResponse } from "@wayfo/shared";
 import { eventBus } from "../core/events/eventBus";
 import { log } from "../core/logger";
+import { getImagePoolConcurrency } from "../core/config";
 import {
   createArtifact,
   createJob,
@@ -19,11 +20,10 @@ import {
 } from "../core/amazon/normalize";
 import { readGlobalCache, readRunCache, writeGlobalCache } from "../core/amazon/cache";
 import {
-  createAmazonProductJob,
-  fetchJobResults,
   HasDataError,
-  waitForJobFinish
+  scrapeAmazonProduct
 } from "../connectors/hasdata";
+import { downloadProductImages } from "../core/images/downloadPool";
 
 const steps: Step[] = ["SCRAPE_AMAZON"];
 
@@ -123,6 +123,7 @@ async function runScrapeAmazon(run: Run) {
       apiKey
     });
     seedSnapshot = seedResult.product;
+    await downloadImagesForSnapshot(run.id, seedJob.id, seedSnapshot);
     updateJob(run.id, seedJob.id, {
       status: seedResult.fromCache ? "SKIPPED" : "SUCCEEDED"
     });
@@ -137,6 +138,23 @@ async function runScrapeAmazon(run: Run) {
     });
   } catch (error) {
     handleJobError(run.id, seedJob.id, "SCRAPE_AMAZON", error);
+    return;
+  }
+
+  if (!run.enumerateVariants) {
+    emit({
+      id: nanoid(),
+      type: "RUN_PROGRESS",
+      runId: run.id,
+      message: "变体枚举已关闭，跳过变体入列。",
+      timestamp: new Date().toISOString()
+    });
+    log({
+      level: "info",
+      runId: run.id,
+      step: "SCRAPE_AMAZON",
+      message: "Variants enumeration disabled"
+    });
     return;
   }
 
@@ -171,6 +189,7 @@ async function runScrapeAmazon(run: Run) {
         asin: variantAsin,
         apiKey
       });
+      await downloadImagesForSnapshot(run.id, variantJob.id, result.product);
       updateJob(run.id, variantJob.id, {
         status: result.fromCache ? "SKIPPED" : "SUCCEEDED"
       });
@@ -187,6 +206,58 @@ async function runScrapeAmazon(run: Run) {
       handleJobError(run.id, variantJob.id, "SCRAPE_AMAZON", error);
       return;
     }
+  }
+}
+
+function collectImageUrls(snapshot: AmazonProductSnapshot) {
+  const urls = new Set<string>();
+  if (snapshot.images.primary) {
+    urls.add(snapshot.images.primary);
+  }
+  snapshot.images.all.forEach((url) => urls.add(url));
+  snapshot.images.description.forEach((url) => urls.add(url));
+  snapshot.variants.forEach((variant) => {
+    if (variant.imageUrl) {
+      urls.add(variant.imageUrl);
+    }
+  });
+  return Array.from(urls);
+}
+
+async function downloadImagesForSnapshot(
+  runId: string,
+  jobId: string,
+  snapshot: AmazonProductSnapshot
+) {
+  const urls = collectImageUrls(snapshot);
+  if (urls.length === 0) {
+    return;
+  }
+  try {
+    const index = await downloadProductImages({
+      runId,
+      asin: snapshot.asin,
+      urls,
+      concurrency: getImagePoolConcurrency()
+    });
+    if (index) {
+      createArtifact({
+        runId,
+        jobId,
+        type: "amazon/product/images",
+        relativePath: `amazon/products/${snapshot.asin}/images/index.json`,
+        content: index
+      });
+    }
+  } catch (error) {
+    log({
+      level: "warn",
+      runId,
+      jobId,
+      step: "SCRAPE_AMAZON",
+      message: "Image download failed",
+      err: error
+    });
   }
 }
 
@@ -256,16 +327,11 @@ async function fetchAndCacheAsin(input: {
     return { product: cachedGlobal.product, fromCache: true };
   }
 
-  const jobId = await createAmazonProductJob({
-    asins: [input.asin],
+  const matched = await scrapeAmazonProduct({
+    asin: input.asin,
     domain: input.domain,
     apiKey: input.apiKey
   });
-  await waitForJobFinish({ jobId, apiKey: input.apiKey });
-  const results = await fetchJobResults({ jobId, apiKey: input.apiKey });
-  const matched =
-    results.find((item) => item.product?.asin?.toUpperCase() === input.asin) ??
-    results[0];
   if (!matched) {
     throw new HasDataError({
       code: "HASDATA_EMPTY_RESULT",

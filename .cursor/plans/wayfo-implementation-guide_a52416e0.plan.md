@@ -17,11 +17,14 @@ todos:
   - id: wayfair_auth_connector
     content: 实现 Wayfair OAuth token 获取与缓存/刷新（sandbox+prod），GraphQL client 与基础错误处理。
     status: pending
+  - id: wayfair_shared_types
+    content: 在 packages/shared 固化 Wayfair GraphQL 的核心 types + zod schema（marketContext/questions/answers/submit/submissions/validationFlaws），并提供 request/response 的最小封装，供 server/web/orchestrator 共享。
+    status: pending
   - id: wayfair_product_addition_flow
     content: 实现 discovery（taxonomyCategories/questions/brandAssociations/mediaMetaDataTags）→ submit → submissions poll → validationFlaws 解析 → NEEDS_REVIEW → resubmit。
     status: pending
   - id: amazon_connector
-    content: 实现基于 HasData 的 Amazon 商品数据采集 + 缓存落盘（按 ASIN 幂等）+ 变体 fan-out 入队 + 失败降级/人审闭环。
+    content: 实现基于 HasData 的 Amazon 商品数据采集 + 缓存落盘（按 ASIN 幂等）+ 变体枚举可配置（默认关闭，仅处理输入 ASIN）+ 失败降级/人审闭环。
     status: pending
   - id: ai_gateway_embeddings_classify
     content: 实现 OpenAI embedding + 本地向量索引 + class 候选检索 + LLM 最终分类（规范化输出与 repair）。
@@ -34,7 +37,7 @@ todos:
     status: pending
   - id: docs_update_architecture
     content: 更新 project/architecture.md：反映 Wayfair Catalog/Product Addition GraphQL 流程替代 xlsx 模板流程。
-    status: pending
+    status: completed
 isProject: false
 ---
 
@@ -83,7 +86,7 @@ isProject: false
 ## Orchestrator（工作流编排）
 
 - 状态机步骤（建议初版）：
-  - `SCRAPE_AMAZON`：通过 HasData 获取商品快照（先抓 seed ASIN，再将 variants fan-out 为独立采集任务；按 ASIN 幂等缓存）→ `artifacts/amazon/products/<asin>/`** + 原图下载缓存
+  - `SCRAPE_AMAZON`：通过 HasData 获取商品快照（默认只处理输入 ASIN；变体枚举与 fan-out 可配置，默认关闭；按 ASIN 幂等缓存）→ `artifacts/amazon/products/<asin>/`** + 原图下载缓存
   - `DIMENSION_ENRICH`：检查尺寸是否齐全；不齐全则走 Supplier Connector（可插拔）补全 → `artifacts/dimensions.json`
   - `WAYFAIR_CLASSIFY`：OpenAI Embedding + 本地向量库检索候选 class（或 taxonomyCategories）+ 高智模型决策 → `artifacts/wayfair/classification.json`
   - `IMAGE_CLASSIFY`：多模态/图片识别将原图归类 primary/dimension/... → `artifacts/images/classification.json`
@@ -147,7 +150,273 @@ isProject: false
 
 ## 需要同步更新的架构文档
 
-- 在 `project/architecture.md` 中把 “Wayfair Template xlsx 填充/上传” 段落替换为 “Wayfair Catalog + Product Addition GraphQL discovery→submit→poll→review→resubmit” 的流程与数据结构。
+- `project/architecture.md` 已改为 Product Addition 的 discovery→submit→poll→review→resubmit（不再依赖 xlsx 模板）。
+
+## Wayfair API（GraphQL）对接规范（用于其它 agent 直接落地）
+
+> 目标：让“对接 Wayfair”这件事**不需要猜字段**。所有模块统一依赖这里的类型与 schema。
+
+### 认证（OAuth token）
+
+- **token endpoint**：`POST https://sso.auth.wayfair.com/oauth/token`
+- **grant_type**：`client_credentials`
+- **audience**：
+  - sandbox：`https://sandbox.api.wayfair.com/`
+  - prod：`https://api.wayfair.com/`
+- **token 有效期**：24h（建议 12h 主动刷新）
+- **调用 header**：`Authorization: Bearer <access_token>`
+
+### GraphQL endpoints
+
+- **Supplier Catalog（read）**：`https://api.wayfair.io/{sandbox/}v1/supplier-catalog-api/graphql`（scope `read:catalog_products`）
+- **Product Catalog / Product Addition（write）**：`https://api.wayfair.io/{sandbox/}v1/product-catalog-api/graphql`（scopes 以文档为准；至少包含 questions、submit、submissions、brands、taxonomy、media tags）
+
+### TypeScript types（建议位置：`packages/shared/src/wayfair/types.ts`）
+
+```ts
+export type WayfairEnv = "sandbox" | "prod";
+
+export type WayfairBrandInput =
+  | "WAYFAIR"
+  | "JOSS_AND_MAIN"
+  | "PERIGOLD"
+  | "ALLMODERN"
+  | "BIRCHLANE";
+
+export type WayfairCountryInput =
+  | "UNITED_STATES"
+  | "UNITED_KINGDOM"
+  | "GERMANY"
+  | "CANADA";
+
+export type WayfairMarketContextInput = {
+  // Example: "en-US"
+  locale: string;
+  country: WayfairCountryInput;
+  brand: WayfairBrandInput;
+};
+
+export type WayfairQuestionAnswerType =
+  | "DECIMAL"
+  | "BOOLEAN"
+  | "SINGLE_CHOICE"
+  | "INTEGER"
+  | "MULTI_CHOICE"
+  | "STRING"
+  | "ENUM";
+
+export type WayfairQuestionImportanceType =
+  | "OPTIONAL"
+  | "REQUIRED"
+  | "CONDITIONAL"
+  | "RECOMMENDED";
+
+export type WayfairPossibleAnswer = {
+  key?: string | null;
+  // IMPORTANT: This is the value Wayfair expects back in submit answers.
+  value: string;
+};
+
+export type WayfairProductAdditionQuestion = {
+  id: string;
+  displayName: string;
+  answerType: WayfairQuestionAnswerType | null;
+  isActive: boolean;
+  isMultiValue: boolean;
+  importanceType?: WayfairQuestionImportanceType | null;
+  possibleAnswers: WayfairPossibleAnswer[];
+  childQuestions: WayfairProductAdditionQuestion[];
+  isUnavailableEligible?: boolean | null;
+  isNotApplicableEligible?: boolean | null;
+};
+
+export type WayfairSupplierBrandAssociation = {
+  id: string;
+  manufacturer: { id: string; name?: string | null };
+};
+
+export type WayfairBrandAssociationsPageInfo = {
+  hasNextPage: boolean;
+  totalPages: number;
+};
+
+export type WayfairBrandAssociationsResponse = {
+  brands: WayfairSupplierBrandAssociation[];
+  pageInfo: WayfairBrandAssociationsPageInfo;
+};
+
+export type WayfairMediaMetaDataTagTypeInput =
+  | "DOCUMENT"
+  | "LEGAL_DOCUMENT"
+  | "LANGUAGE"
+  | "REGION";
+
+export type WayfairMediaMetaDataTag = {
+  metaDataId: string;
+  name: string;
+};
+
+export type WayfairMediaMetaDataTagSet = {
+  metaDataTagType: WayfairMediaMetaDataTagTypeInput;
+  metaDataTags: WayfairMediaMetaDataTag[];
+};
+
+export type WayfairMediaDocumentTypeInput = "DOCUMENT" | "LEGAL_DOCUMENT";
+
+export type WayfairMediaDocumentInput = {
+  mediaDocumentType: WayfairMediaDocumentTypeInput;
+  documentUrl: string;
+  documentTypes: string[];
+  regionType: string;
+  language: string;
+};
+
+export type WayfairMediaInput = {
+  images?: string[] | null;
+  videos?: string[] | null;
+  documents?: WayfairMediaDocumentInput[] | null;
+};
+
+export type WayfairAnswer = {
+  questionId: string;
+  // Serialized as string per API doc; must be convertible to the target type.
+  value: string;
+  // For multi-value / multi-choice. If omitted, default behavior should be 1.
+  parentRank?: number;
+  rank?: number;
+};
+
+export type WayfairProductPartWithAnswers = {
+  supplierPartNumber: string;
+  answers: WayfairAnswer[];
+
+  // Optional shortcuts (can be provided instead of answering some "core::..." questions).
+  manufacturerId?: string | null;
+  manufacturerName?: string | null;
+  amazonStandardIdentificationNumber?: string | null;
+  collectionName?: string | null;
+  manufacturerPartNumber?: string | null;
+  manufacturerProductUrl?: string | null;
+  productName?: string | null;
+  universalProductCode?: string | null;
+  featureBullets?: string[] | null;
+  marketingCopy?: string | null;
+  media?: WayfairMediaInput | null;
+
+  // Per-part override
+  ignoreWarnings?: boolean | null;
+};
+
+export type WayfairSubmitProductAdditionRequest = {
+  classId: number;
+  marketContext: WayfairMarketContextInput;
+  parts: WayfairProductPartWithAnswers[];
+};
+
+export type WayfairSubmitProductAdditionsRequest = {
+  supplierId: string;
+  proposedProductAdditions: WayfairSubmitProductAdditionRequest[];
+  ignoreWarnings?: boolean | null;
+  rejectAllOnErrors?: boolean | null;
+};
+
+export type WayfairSubmitProductAdditionsResponse = {
+  requestIds: string[];
+};
+
+export type WayfairOperationStatus = "SUCCEEDED" | "FAILED";
+
+export type WayfairValidationFlawType = "ERROR" | "WARNING";
+
+export type WayfairValidationFlaw = {
+  questionId: string;
+  flawType: WayfairValidationFlawType;
+  flaw: string;
+  // Present on submissions response; useful for mapping to repeating answers.
+  parentRank?: number | null;
+  rank?: number | null;
+};
+
+export type WayfairProductAdditionStatus =
+  | "VALIDATING"
+  | "VALIDATED"
+  | "SUBMITTING"
+  | "SUBMITTED"
+  | "PROCESSING"
+  | "LIVE";
+
+export type WayfairProductAdditionSubmission = {
+  requestId: string;
+  supplierId: string;
+  supplierPartNumber?: string | null;
+  classId: number;
+  marketContext: { locale: string; country: string; brand: string };
+  status: WayfairProductAdditionStatus;
+  validationStatus?: WayfairOperationStatus | null;
+  submissionStatus?: WayfairOperationStatus | null;
+  validationFlaws: WayfairValidationFlaw[];
+};
+```
+
+### Discovery → Submit → Poll：产物与幂等键（建议位置：`packages/shared/src/wayfair/artifacts.ts`）
+
+- **Discovery artifacts**
+  - `artifacts/wayfair/taxonomyCategories.json`（按 `marketContext`）
+  - `artifacts/wayfair/questions.json`（按 `supplierId + classId + marketContext`）
+  - `artifacts/wayfair/brandAssociations.json`（按 `supplierId + marketContext`）
+  - `artifacts/wayfair/mediaMetaDataTags.json`（按 `marketContext + metaDataTagTypes`）
+- **Submit artifacts**
+  - `artifacts/wayfair/submit/request.json`：`WayfairSubmitProductAdditionsRequest`
+  - `artifacts/wayfair/submit/requestIds.json`：`string[]`
+  - `artifacts/wayfair/submissions/<requestId>.json`：`WayfairProductAdditionSubmission[]`（每次 poll 追加快照或覆盖）
+
+幂等建议：
+
+- `WAYFAIR_DISCOVERY`：key = `env + supplierId + marketContext + classId + schemaVersion`
+- `WAYFAIR_SUBMIT`：key = `env + supplierId + sha256(request.json) + schemaVersion`
+- `WAYFAIR_POLL`：key = `env + supplierId + requestIds.join(",")`
+
+### 自动回答（AnswerBuilder）策略（用于“完全自动化”）
+
+目标是把 questions 变成 answers，并尽量让第一次 submit 就通过；失败时再基于 validationFlaws 自动修复。
+
+- **步骤 A：生成“question index”**
+  - 将 `WayfairProductAdditionQuestion[]` 展平成 `Map<questionId, question>`
+  - 记录每个 question 的 `answerType/isMultiValue/possibleAnswers/importanceType/childQuestions`
+- **步骤 B：确定 `manufacturerId`**
+  - 从 `brandAssociations` 选一个默认 manufacturer（策略可配置：按 name 匹配/默认第一个/固定 manufacturerId）
+  - 写入 `parts[].manufacturerId`（避免重复回答 core::manufacturerId）
+- **步骤 C：媒体（images）**
+  - `parts[].media.images` 至少 1 张（优先使用已生成/已挑选的 primary image URL；否则退回原图）
+- **步骤 D：answers 生成**
+  - 对每个 questionId 走 mapping：
+    - **规则映射（优先）**：例如价格/尺寸/颜色/材质/包装等，从 Amazon/specs/dimensions 中提取并规范化
+    - **choice 映射**：把候选值标准化（大小写/同义词）后与 `possibleAnswers[].value` 做匹配；仅允许输出命中的 value
+    - **数值映射**：DECIMAL/INTEGER 输出可解析字符串（例如 "12.5"）
+    - **BOOLEAN 映射**：统一输出 "Yes"/"No" 或按 possibleAnswers 指定（如果 possibleAnswers 存在则必须用其 value）
+    - **multiValue/multiChoice**：生成多条 `WayfairAnswer`，用 `parentRank/rank` 从 1 递增
+  - childQuestions：默认只在 parent 相关条件满足时回答；若无法判断则先不答，交由 validationFlaws 反馈驱动修复
+
+### 自动修复（FlawReducer）策略（将 validationFlaws 收敛到 0）
+
+- 输入：上一次 `request.json` + 最新 `submissions` + `question index`
+- 输出：新的 `request.json`（只改动必要字段）并重新 submit
+
+优先自动处理的 flaw 类型（按通用性）：
+
+- **类型不匹配**：将 value 重新序列化（整数/小数/布尔）
+- **choice 不合法**：重新匹配到 `possibleAnswers[].value`（无法匹配则标记 NEEDS_REVIEW）
+- **缺少必填**：从可推导信息补齐；补不齐则 NEEDS_REVIEW
+- **multiValue rank 问题**：重建该 questionId 的 answers 列表，确保 `parentRank/rank` 连续从 1 开始
+
+### 文档缺口（需要你补充到 `project/wayfair-api/`，否则实现会走“猜测”）
+
+目前文档中出现了 `TaxonomyAttributesByFilter` 与 `conditionalityRules` 的类型，但未给出对应 query 的**完整 GraphQL 示例**与 variables 结构。为了把“自动回答/自动修复”做得更稳，建议补充：
+
+- `TaxonomyAttributesByFilter` 的 query 名称、入参（是否为 `AttributesFilterInput`）、返回字段示例
+- conditionality rules 的获取方式（是否随 attributesByFilter 返回即可，或需要独立 query）
+- Product Addition 的 `questions` 是否会返回 `description/isCustomEligible`（在示例里未取字段，但 types 中存在）
+- `validationFlaws.flawType` 的完整枚举与常见 flaw 文案（用于自动分类与修复策略）
 
 ## 交付里程碑（建议）
 

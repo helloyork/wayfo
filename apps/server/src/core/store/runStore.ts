@@ -20,6 +20,7 @@ type RunRow = {
   currentStep: Step | null;
   amazonUrl: string;
   marketContext: string | null;
+  enumerateVariants: number | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -67,6 +68,7 @@ export function hashInput(payload: unknown) {
 export function createRun(input: {
   amazonUrl: string;
   marketContext?: string;
+  enumerateVariants?: boolean;
 }): Run {
   const now = new Date().toISOString();
   const id = nanoid();
@@ -74,6 +76,7 @@ export function createRun(input: {
     id,
     amazonUrl: input.amazonUrl,
     marketContext: input.marketContext,
+    enumerateVariants: input.enumerateVariants ?? false,
     status: "PENDING",
     createdAt: now,
     updatedAt: now
@@ -86,12 +89,31 @@ export function createRun(input: {
   const db = getDb();
   db.prepare(
     `
-      insert into runs (id, status, currentStep, amazonUrl, marketContext, createdAt, updatedAt)
-      values (@id, @status, @currentStep, @amazonUrl, @marketContext, @createdAt, @updatedAt)
+      insert into runs (
+        id,
+        status,
+        currentStep,
+        amazonUrl,
+        marketContext,
+        enumerateVariants,
+        createdAt,
+        updatedAt
+      )
+      values (
+        @id,
+        @status,
+        @currentStep,
+        @amazonUrl,
+        @marketContext,
+        @enumerateVariants,
+        @createdAt,
+        @updatedAt
+      )
     `
   ).run({
     ...run,
-    currentStep: null
+    currentStep: null,
+    enumerateVariants: run.enumerateVariants ? 1 : 0
   });
 
   return run;
@@ -106,6 +128,7 @@ export function listRuns(): Run[] {
     id: row.id,
     amazonUrl: row.amazonUrl,
     marketContext: row.marketContext ?? undefined,
+    enumerateVariants: row.enumerateVariants ? row.enumerateVariants === 1 : undefined,
     status: row.status,
     currentStep: row.currentStep ?? undefined,
     createdAt: row.createdAt,
@@ -141,6 +164,7 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
           currentStep = @currentStep,
           amazonUrl = @amazonUrl,
           marketContext = @marketContext,
+          enumerateVariants = @enumerateVariants,
           updatedAt = @updatedAt
       where id = @id
     `
@@ -150,6 +174,7 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
     currentStep: next.currentStep ?? null,
     amazonUrl: next.amazonUrl,
     marketContext: next.marketContext ?? null,
+    enumerateVariants: next.enumerateVariants ? 1 : 0,
     updatedAt: next.updatedAt
   });
 

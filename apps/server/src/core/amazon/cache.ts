@@ -46,6 +46,36 @@ export function getRunRawPath(runId: string, asin: string) {
   );
 }
 
+export type RunImageIndex = {
+  generatedAt: string;
+  items: Array<{
+    url: string;
+    fileName: string;
+    contentType?: string;
+    size?: number;
+  }>;
+  errors?: Array<{
+    url: string;
+    message: string;
+  }>;
+};
+
+export function getRunImagesDir(runId: string, asin: string) {
+  return path.join(runsRoot, runId, "artifacts", "amazon", "products", asin, "images");
+}
+
+export function getRunImageIndexPath(runId: string, asin: string) {
+  return path.join(getRunImagesDir(runId, asin), "index.json");
+}
+
+export function getRunImagePath(runId: string, asin: string, fileName: string) {
+  return path.join(getRunImagesDir(runId, asin), fileName);
+}
+
+export function readRunImageIndex(runId: string, asin: string) {
+  return readJson<RunImageIndex>(getRunImageIndexPath(runId, asin));
+}
+
 export function readRunCache(runId: string, asin: string): CacheEntry | null {
   const product = readJson<AmazonProductSnapshot>(getRunProductPath(runId, asin));
   if (!product) {

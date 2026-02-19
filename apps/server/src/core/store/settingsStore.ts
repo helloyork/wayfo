@@ -7,8 +7,14 @@ type HasDataSettings = {
   updatedAt: string;
 };
 
+type AppSettings = {
+  enumerateVariantsDefault: boolean;
+  updatedAt: string;
+};
+
 const settingsDir = path.join(dataRoot, "settings");
 const hasDataSettingsPath = path.join(settingsDir, "hasdata.json");
+const appSettingsPath = path.join(settingsDir, "app.json");
 
 function readSettings(): HasDataSettings | null {
   if (!fs.existsSync(hasDataSettingsPath)) {
@@ -21,6 +27,19 @@ function readSettings(): HasDataSettings | null {
 function writeSettings(next: HasDataSettings) {
   ensureDir(settingsDir);
   fs.writeFileSync(hasDataSettingsPath, JSON.stringify(next, null, 2));
+}
+
+function readAppSettings(): AppSettings | null {
+  if (!fs.existsSync(appSettingsPath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(appSettingsPath, "utf-8");
+  return JSON.parse(raw) as AppSettings;
+}
+
+function writeAppSettings(next: AppSettings) {
+  ensureDir(settingsDir);
+  fs.writeFileSync(appSettingsPath, JSON.stringify(next, null, 2));
 }
 
 export function getHasDataApiKey() {
@@ -43,5 +62,22 @@ export function setHasDataApiKey(apiKey: string) {
     updatedAt: new Date().toISOString()
   };
   writeSettings(next);
+  return next;
+}
+
+export function getAppSettings() {
+  const settings = readAppSettings();
+  return {
+    enumerateVariantsDefault: settings?.enumerateVariantsDefault ?? false,
+    updatedAt: settings?.updatedAt ?? null
+  };
+}
+
+export function setAppSettings(input: { enumerateVariantsDefault: boolean }) {
+  const next: AppSettings = {
+    enumerateVariantsDefault: input.enumerateVariantsDefault,
+    updatedAt: new Date().toISOString()
+  };
+  writeAppSettings(next);
   return next;
 }

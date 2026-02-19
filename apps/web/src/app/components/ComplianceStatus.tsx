@@ -8,7 +8,7 @@ export function ComplianceStatus({ items }: { items: ComplianceItem[] }) {
     <div className="card stack">
       <div className="row">
         <strong>安全与合规</strong>
-        <span className="muted">脱敏与审核占位</span>
+        <span className="muted">脱敏与审核</span>
       </div>
       {items.length === 0 ? (
         <div className="empty">暂无合规提示</div>

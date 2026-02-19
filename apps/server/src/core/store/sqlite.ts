@@ -20,6 +20,7 @@ export function getDb() {
       currentStep text,
       amazonUrl text not null,
       marketContext text,
+      enumerateVariants integer,
       createdAt text not null,
       updatedAt text not null
     );
@@ -46,6 +47,16 @@ export function getDb() {
       createdAt text not null
     );
   `);
+
+  const runColumns = db
+    .prepare("pragma table_info(runs)")
+    .all() as Array<{ name: string }>;
+  const hasEnumerateVariants = runColumns.some((column) => column.name === "enumerateVariants");
+  if (!hasEnumerateVariants) {
+    db.exec(
+      "alter table runs add column enumerateVariants integer not null default 0;"
+    );
+  }
 
   dbInstance = db;
   return db;

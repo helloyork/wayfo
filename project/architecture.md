@@ -43,20 +43,20 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
   - 提供 REST API（读写缓存/触发流程/提交人审结果）与 WebSocket/SSE（推送进度事件）。
   - 统一鉴权（本地默认弱鉴权也应预留 token），统一错误码与响应结构。
 - **工作流编排层（Orchestrator）**
-  - 定义状态机（采集→分析→生成→模板→审查→导出/上传）。
+  - 定义状态机（采集→分析→生成→Wayfair discovery/submit/poll→审查→重提）。
   - 负责断点续跑、幂等、重试、取消、暂停/恢复、Run 汇总。
 - **任务执行层（Workers）**
-  - Scrape / Enrich(Dimension) / Classify / Image / Template / Export / Upload 等具体 worker。
+  - Scrape / Enrich(Dimension) / Classify / Image / WayfairDiscovery / WayfairSubmit / WayfairPoll / Review 等具体 worker。
   - 输入与输出都使用统一 schema（见“Agent 输出规范化”）。
 - **连接器层（Connectors）**
   - **Amazon Connector**：基于 HasData Amazon Product 数据接口获取结构化商品信息与资源链接，并将结果规范化为稳定 schema 与可缓存 artifact。
-  - **Wayfair Connector**：模板下载、上架 API 调用、错误解析与重试建议。
+  - **Wayfair Connector**：Wayfair Catalog API（GraphQL）对接：OAuth token、discovery（taxonomy/questions/brands/media tags）、submit、submissions 轮询、validationFlaws 解析与自动修复/人审建议。
   - **Supplier Connector**：尺寸等补全数据源 API。
 - **AI 适配层（AI Gateway）**
   - 统一模型调用（LLM/Embedding/Image/Multi-modal），做：重试、超时、配额、成本记录、输出校验与降级。
   - Prompt 与输出 schema 版本化，保证可复现。
 - **存储层（Storage）**
-  - 文件系统作为 artifact store（JSON/图片/xlsx/log）。
+  - 文件系统作为 artifact store（JSON/图片/log）。
   - 轻量索引（建议 SQLite）记录 Run/Job 状态、产物路径、成本、审计信息。
 - **可观测性层（Observability）**
   - 结构化日志、Run/Job 关联 ID、关键指标（耗时/失败率/模型成本/外部 API 429）。
@@ -68,9 +68,9 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 ## 数据、缓存与状态模型（建议落地）
 
 ### 核心概念
-- **Run**：用户发起的一次端到端处理（一个 Amazon 链接或一个产品集合）。
-- **Job**：Run 中的一个可重试单元（例如“采集页面”“生成图片批次”“填充模板”）。
-- **Artifact**：Job 的输出产物（JSON、图片、xlsx、向量索引等）。
+- **Run**：用户发起的一次端到端处理（一个 Amazon 链接/ASIN；默认只处理该产品，变体可配置）。
+- **Job**：Run 中的一个可重试单元（例如“采集页面”“生成图片批次”“Wayfair discovery/submit/poll”）。
+- **Artifact**：Job 的输出产物（JSON、图片、向量索引等）。
 
 ### 建议的本地目录布局（可调）
 - `data/runs/<runId>/run.json`：Run 元信息、当前状态、时间戳、版本、成本汇总
@@ -81,9 +81,13 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 - `data/runs/<runId>/artifacts/amazon/products/<asin>/images/original/*`
 - `data/runs/<runId>/artifacts/images/classification.json`
 - `data/runs/<runId>/artifacts/images/generated/<type>/*`
-- `data/runs/<runId>/artifacts/wayfair/template.xlsx`
-- `data/runs/<runId>/artifacts/wayfair/filled.json`
-- `data/runs/<runId>/artifacts/wayfair/final.xlsx`
+- `data/runs/<runId>/artifacts/wayfair/taxonomyCategories.json`：taxonomyCategories 全量/分页缓存（按 marketContext）
+- `data/runs/<runId>/artifacts/wayfair/questions.json`：productAddition.questions 的问题树（按 supplierId + classId + marketContext）
+- `data/runs/<runId>/artifacts/wayfair/brandAssociations.json`：supplierBrand.brandAssociations 返回（manufacturerId 候选）
+- `data/runs/<runId>/artifacts/wayfair/mediaMetaDataTags.json`：media.mediaMetaDataTags 返回（documents tags）
+- `data/runs/<runId>/artifacts/wayfair/submit/request.json`：最终 SubmitProductAdditionsRequest（可重放）
+- `data/runs/<runId>/artifacts/wayfair/submit/requestIds.json`：submit 返回的 requestIds
+- `data/runs/<runId>/artifacts/wayfair/submissions/<requestId>.json`：submissions 轮询快照（含 validationFlaws）
 - `data/runs/<runId>/logs/*.log`（结构化 JSONL 或可解析文本）
 
 ### 幂等与断点续跑
@@ -101,7 +105,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 
 ### Batch：可并行的任务分组
 - 图片生成通常以“批次”并行：例如主图/规格图在一个批次内生成 4 张候选，受限于 image API 并发与成本。
-- 变体（variants）可按批次并行：每个变体的字段填充/图片组合/模板行生成作为批次任务。
+- 变体（variants）可按批次并行（仅当启用变体枚举时）：每个变体的字段填充/图片组合/Wayfair answers 生成与提交作为批次任务。
 
 ### 取消、暂停与恢复
 - Run 级别支持取消/暂停；Orchestrator 需要把取消信号传播到 worker，并在安全点落盘。
@@ -157,19 +161,19 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 - `asin`、`canonicalUrl`
 - `title`、`description`/`bullets`
 - `price`（含 currency）、`availability`
-- `variants`（变体维度 + 每个变体的 `asin`/链接）
+- `variants`（可选，存在则保留变体维度 + 每个变体的 `asin`/链接）
 - `productInformation/specs`（键值对）
 - `images`（尽可能包含高清图）
 
-### 变体（Variants）任务模型（必须）
+### 变体（Variants）任务模型（可配置，默认关闭）
 
-系统需要把“一个 Amazon 链接”扩展为“一组产品任务（父 ASIN + 全部变体 ASIN）”，并将**每个变体视为独立新任务加入队列**：
+系统默认只处理“一个 Amazon 链接/ASIN”，不会自动穷举变体。变体枚举可配置开启，开启后才会把“一个 Amazon 链接”扩展为“一组产品任务（父 ASIN + 全部变体 ASIN）”，并将**每个变体视为独立新任务加入队列**：
 
-- `SCRAPE_AMAZON_SEED`：对用户输入链接/ASIN 抓取一次，得到父 `asin` 与 `variants[].asin` 列表
-- `SCRAPE_AMAZON_ASIN`（队列任务）：对每个 `asin`（父 + 变体去重后）分别入队执行采集与落盘
+- `SCRAPE_AMAZON_SEED`：对用户输入链接/ASIN 抓取一次，得到父 `asin` 与可选的 `variants[].asin` 列表
+- `SCRAPE_AMAZON_ASIN`（队列任务）：仅在启用变体枚举时，对每个 `asin`（父 + 变体去重后）分别入队执行采集与落盘
   - 幂等 key 必须包含：`domain + asin + schemaVersion`（从而严格按产品 ID 缓存）
   - 任务执行前必须先走“缓存规则”，命中缓存则直接完成
-- 下游步骤（Dimension/Classification/图片流水线/Wayfair）应以 `asin` 为粒度执行，使每个变体都能独立产出、独立审查、独立重试与断点续跑。
+- 下游步骤（Dimension/Classification/图片流水线/Wayfair）默认只对输入 `asin` 执行；当启用变体枚举时，才以 `asin` 为粒度执行，使每个变体都能独立产出、独立审查、独立重试与断点续跑。
 
 ### 失败处理与人审介入（必须）
 
@@ -244,23 +248,60 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 }
 ```
 
-## 3. Wayfair Template
+## 3. Wayfair Catalog API（Product Addition，全自动化）
 
-随后，根据数据采集阶段获得的 Class 信息，使用 Wayfair API 或暴露的接口，下载对应的模板 xlsx 文件。
+模板文件（xlsx）下载/解析/填表属于**高维护成本且容错差**的方案。本项目改为使用 Wayfair 的 **Catalog API（GraphQL）** 完成 discovery→submit→poll 的标准化上架流程，实现端到端自动化，并把“人审”作为兜底闭环而非主路径。
 
-使用NodeJS库进行解析。每种Template文件在大体结构上相同，但是字段不同。提取出所有的字段名称。  
-Template表格中的字段值可能是下拉框（单选），需要将所有选项提供给模型。
+### 3.1 Discovery（拿到“本次提交所需的全部约束条件”）
 
-使用高智慧模型，提供产品完整信息，对所有字段进行填充，输出JSON文件。当存在无法填写的字段时，需要输出对应的字段名，用于在审查阶段要求填写字段值。
+> 核心原则：**所有“字段定义/可选项/必填规则”以 API 返回为准**，并落盘缓存，避免静态模板漂移。
 
-## 4. 审查
+- `taxonomyCategories(marketContext, paginationOptions)`
+  - 获取 `taxonomyCategoryId + name`，用于类目选择（classId）与 UI 显示
+  - taxonomy 会变动，建议至少按月刷新缓存
+- `productAddition.questions(request: { supplierId, classId, marketContext })`
+  - 获取 questions 树（含 `answerType/isMultiValue/possibleAnswers/childQuestions/importanceType`）
+  - 前端表单与后端校验/序列化均应由该结构驱动
+- `supplierBrand.brandAssociations(request: { supplierId, marketContext, page, pageSize })`
+  - 获取 `manufacturer.id` 列表（`manufacturerId` 为 submit 必填）
+- `media.mediaMetaDataTags(input: { metaDataTagTypes, marketContext })`
+  - 当需要 documents（说明书/合规文件）时，获取合法 tags（DOCUMENT/LEGAL_DOCUMENT/LANGUAGE/REGION）
 
-随后，使用Wayfo前端，提供用户审查。用户可以查看所有生成的信息，包括产品基本信息、变体、详细参数、介绍、所有产品图片和价格等等。  
-而如果存在无法填写的字段，提供界面给用户填写。
+### 3.2 自动生成提交载荷（SubmitProductAdditionsRequest）
 
-信息完备后，合成最终的Wayfair上传文件（xlsx）。
+系统需要一个可重放的“提交载荷生成器”：
+- 输入：Amazon 规范化商品快照 + 尺寸补全 + 图片产物 + discovery 缓存（questions/brands/tags）
+- 输出：`SubmitProductAdditionsRequest`（落盘到 `artifacts/wayfair/submit/request.json`）
 
-使用Wayfair API对生产应用发起创建产品的请求。失败后，提供错误信息，并允许用户重新填写。
+关键约束：
+- `parts[].supplierPartNumber`：必须稳定且全局唯一（建议由 `asin + variantKey` 生成，并在设置中允许加前缀/后缀）
+- `parts[].manufacturerId`：必须来自 brandAssociations
+- `parts[].media.images`：至少 1 张公开可访问图片 URL（用于上线必需）
+- `parts[].answers[]`：按 questions 生成；choice 类型必须从 `possibleAnswers[].value` 中选择；multi-value/multi-choice 要正确填充 `parentRank/rank`（从 1 递增）
+
+### 3.3 submit（异步提交）
+
+调用 `productAddition.submit(request)`，返回 `requestIds[]`：
+- discovery queries 速率限制：10 rps
+- submit 频率：1 次/秒
+- payload 上限：15MB；建议单批最多 100 个 parts（variants 提交建议设置 `rejectAllOnErrors: true`）
+
+### 3.4 submissions（轮询状态 + flaws 收敛）
+
+调用 `productAddition.submissions(request: { supplierId, ids: requestIds })` 轮询直到终态：
+- 状态推进：`VALIDATING` → `PROCESSING` → `SUBMITTED`
+- 若存在 `validationFlaws[]`（或 `validationStatus == FAILED`）：
+  - 优先尝试自动修复（类型转换、choice 纠错、补齐必填、纠正 rank、补媒体等）
+  - 无法自动修复则进入 `NEEDS_REVIEW`，由 UI 精确展示 flaw 对应的 `questionId`，用户修正后重新 submit
+
+（可选）当 submission 成功后，可通过 Supplier Catalog Read API 拉取并核验 `supplierPartNumber` 的状态变化，用于“是否可读/是否 live”检查。
+
+## 4. 审查（Human-in-the-loop，兜底闭环）
+
+审查 UI 的主对象从“xlsx 单元格”变为“questions/answers”：
+- 渲染 `productAddition.questions` 为动态表单（支持 childQuestions、multiValue、possibleAnswers）
+- 展示 `validationFlaws` 并定位到具体 questionId
+- 用户提交修正后，后端以相同 inputs 重新生成 submit request 并重提
 
 ---
 
@@ -274,7 +315,7 @@ Agent的输出应该规范化，并且在解析失败后进行一定次数的重
 
 ### 错误分级
 - **可重试**：网络抖动、429/503、临时超时、模型输出不满足 schema（可 repair）。
-- **不可重试**：认证失败/权限不足、模板字段变更导致不兼容（需要更新模板解析）、合规拦截（需要人工处理）。
+- **不可重试**：认证失败/权限不足、Wayfair taxonomy/questions 变更导致映射不兼容（需要更新映射策略或刷新缓存）、合规拦截（需要人工处理）。
 
 ### 重试策略
 - 指数退避 + 抖动；对 429 识别 `Retry-After`；对持续失败启用熔断，避免把外部服务打挂。
