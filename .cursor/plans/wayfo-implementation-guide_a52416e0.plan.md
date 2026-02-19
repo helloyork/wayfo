@@ -1,43 +1,49 @@
 ---
 name: wayfo-implementation-guide
-overview: 基于 project/architecture.md 与 Wayfair Catalog/Product Addition GraphQL 文档，规划一个 local-first 的 Node.js 后端 + 本地 NextJS 前端的落地实现方案：分层可测、Run/Job/Artifact 可恢复、Pool/Batch 并发可控、Human-in-the-loop 审查闭环、Wayfair Catalog API 全流程对接。
+overview: 基于 project/architecture.md 的最新“架构变迁”要求，规划 local-first 的 Node.js 后端 + 本地 NextJS 前端落地方案：创建 Run 前强制 Wayfair 凭据预检 + taxonomy 初始化（向量库 + BM25，缓存 1 个月）；Run 内产品 embedding；分类使用混合搜索 + Agent 判定；以图生图生成候选后上传到带生命周期的媒体存储拿到公开 URL；提交 Wayfair 前强制人审确认（图片选择 + 字段确认），再 submit→poll→flaws→复审/重提。
 todos:
   - id: workspace_scaffold
     content: 初始化 monorepo：apps/server（Node API + orchestrator）/apps/web（NextJS UI）/packages/shared（schemas/types）与一键启动 CLI。
     status: completed
   - id: core_models_storage
-    content: 实现 Run/Job/Artifact 模型、文件系统 artifact store、SQLite 索引、幂等键与断点续跑读取策略。
-    status: pending
+    content: 实现 Run/Job/Artifact 模型、文件系统 artifact store、SQLite 索引、幂等键与断点续跑读取策略（含全局 cache：taxonomy/vectorstore/bm25）。
+    status: completed
   - id: events_api
-    content: 实现 REST + SSE 事件协议、统一错误结构、结构化日志（终端+JSONL）。
-    status: pending
+    content: 实现 REST + SSE 事件协议、统一错误结构、结构化日志（终端+JSONL），并支持 INITIALIZING/WAITING_FOR_REVIEW 等状态事件。
+    status: completed
   - id: pools_batches
-    content: 实现 Browser/Wayfair/Model/Image pools 与 Batch 执行框架（并发、预算、重试、取消传播）。
-    status: pending
+    content: 实现 Wayfair/Model/Image pools 与 Batch 框架（并发、预算、重试、取消传播），并支持 taxonomy 初始化的分池拉取。
+    status: completed
   - id: wayfair_auth_connector
-    content: 实现 Wayfair OAuth token 获取与缓存/刷新（sandbox+prod），GraphQL client 与基础错误处理。
+    content: 实现 Wayfair OAuth token 获取与缓存/刷新（sandbox+prod），GraphQL client 与基础错误处理，并提供“凭据预检”接口。
+    status: completed
+  - id: wayfair_taxonomy_init
+    content: 实现 taxonomy 初始化门禁：按 env+poolId+marketContext 拉取 taxonomyCategories，构建 documents.jsonl、LangChain 本地向量库与 BM25 索引；缓存 1 个月；支持后台刷新与双版本切换。
+    status: pending
+  - id: amazon_connector
+    content: 实现基于 HasData 的 Amazon 商品采集 + 缓存落盘（按 ASIN 幂等）+ 变体枚举可配置（默认关闭）+ 失败降级/人审闭环。
+    status: pending
+  - id: product_embedding
+    content: Run 内构造产品检索文本并创建 embedding（落盘），供分类混合搜索与证据展示复用。
+    status: pending
+  - id: classification_hybrid
+    content: 实现混合召回（向量 TopK + BM25 TopK union）+ 综合打分（embedding/BM25/rule_filter）+ Agent 最终判定（输出 classId/confidence/reasoning/fallback + evidence）。
+    status: pending
+  - id: image_provider_pipeline
+    content: 落地以图生图 provider（优先 OpenAI Images Edits；备选 Bedrock/Vertex），并实现图片类型识别→plan→批次生成（主图/规格图 4 候选）产物落盘。
+    status: pending
+  - id: media_storage
+    content: 实现媒体存储适配（首选 R2，带生命周期规则），上传生成图片并获得公开 URL；Run 内保存候选 URL 列表与最终选择。
     status: pending
   - id: wayfair_shared_types
     content: 在 packages/shared 固化 Wayfair GraphQL 的核心 types + zod schema（marketContext/questions/answers/submit/submissions/validationFlaws），并提供 request/response 的最小封装，供 server/web/orchestrator 共享。
     status: pending
   - id: wayfair_product_addition_flow
-    content: 实现 discovery（taxonomyCategories/questions/brandAssociations/mediaMetaDataTags）→ submit → submissions poll → validationFlaws 解析 → NEEDS_REVIEW → resubmit。
-    status: pending
-  - id: amazon_connector
-    content: 实现基于 HasData 的 Amazon 商品数据采集 + 缓存落盘（按 ASIN 幂等）+ 变体枚举可配置（默认关闭，仅处理输入 ASIN）+ 失败降级/人审闭环。
-    status: pending
-  - id: ai_gateway_embeddings_classify
-    content: 实现 OpenAI embedding + 本地向量索引 + class 候选检索 + LLM 最终分类（规范化输出与 repair）。
-    status: pending
-  - id: image_pipeline
-    content: 实现图片类型识别、generation plan、重绘批次执行、候选默认选择与人审切换（provider 可插拔）。
+    content: 实现 discovery → draft request 生成 → 提交前强制审查（图片选择+字段确认）→ submit → submissions poll → validationFlaws 解析 → 复审/重提。
     status: pending
   - id: next_ui
-    content: 实现 NextJS UI：Run 创建/列表/详情、实时日志、artifact 浏览、Wayfair questions 审查表单、设置页（验证凭据）。
+    content: 实现 NextJS UI：Run 创建/列表/详情、实时日志、artifact 浏览；提交前审查页（图片候选选择+字段确认）；提交后 flaws 审查表单；设置页（验证 Wayfair 凭据）。
     status: pending
-  - id: docs_update_architecture
-    content: 更新 project/architecture.md：反映 Wayfair Catalog/Product Addition GraphQL 流程替代 xlsx 模板流程。
-    status: completed
 isProject: false
 ---
 
@@ -74,11 +80,11 @@ isProject: false
 ## API 设计（Node 服务端）
 
 - REST：
-  - `POST /api/runs`：创建 Run（amazonUrl、marketContext、可选策略配置）
+  - `POST /api/runs`：创建 Run（amazonUrl、marketContext、可选策略配置）；若 taxonomy 未初始化则进入 `INITIALIZING` 并推送进度事件
   - `GET /api/runs`、`GET /api/runs/:runId`
   - `POST /api/runs/:runId/actions`：pause/resume/cancel/retryStep
   - `GET /api/runs/:runId/artifacts`：列举产物；`GET /api/runs/:runId/artifacts/`*：下载/预览
-  - `POST /api/runs/:runId/review`：提交人审结果（Wayfair questions 的 answers、图片选择等）
+  - `POST /api/runs/:runId/review`：提交人审结果（提交前：图片选择+字段确认+确认发送；提交后：questions answers 修正 + flaws 处理）
   - `POST /api/settings/wayfair/validate`：校验 sandbox/prod 凭据并拿 token
 - 事件流：`GET /api/runs/:runId/events`（SSE 优先；WS 可选扩展）
 - 错误约定：统一错误码（`code`）、可重试标记（`retryable`）、建议（`suggestion`）。
@@ -86,16 +92,21 @@ isProject: false
 ## Orchestrator（工作流编排）
 
 - 状态机步骤（建议初版）：
+  - `RUN_INITIALIZING`：创建 Run 后进入初始化门禁（Wayfair 凭据预检 + taxonomy 初始化/复用），完成后才允许推进
   - `SCRAPE_AMAZON`：通过 HasData 获取商品快照（默认只处理输入 ASIN；变体枚举与 fan-out 可配置，默认关闭；按 ASIN 幂等缓存）→ `artifacts/amazon/products/<asin>/`** + 原图下载缓存
   - `DIMENSION_ENRICH`：检查尺寸是否齐全；不齐全则走 Supplier Connector（可插拔）补全 → `artifacts/dimensions.json`
-  - `WAYFAIR_CLASSIFY`：OpenAI Embedding + 本地向量库检索候选 class（或 taxonomyCategories）+ 高智模型决策 → `artifacts/wayfair/classification.json`
+  - `PRODUCT_EMBEDDING`：构造产品检索文本并创建 embedding（落盘）→ `artifacts/amazon/products/<asin>/embedding.json`
+  - `WAYFAIR_CLASSIFY`：混合搜索（向量 + BM25 + rule_filter）召回候选 + Agent 最终判定 → `artifacts/wayfair/classification.json`
   - `IMAGE_CLASSIFY`：多模态/图片识别将原图归类 primary/dimension/... → `artifacts/images/classification.json`
   - `IMAGE_PLAN`：策略配置驱动生成 generation plan → `artifacts/images/plan.json`
   - `IMAGE_GENERATE`：按 plan 批次生成（primary/dimension 默认 4 候选）→ `artifacts/images/generated/`**
+  - `MEDIA_UPLOAD`：把生成图片上传到媒体存储（R2/S3…）并获得公开 URL，落盘候选 URL 列表
   - `WAYFAIR_DISCOVERY`：Catalog/Product Addition discovery：`taxonomyCategories`/`productAddition.questions`/`brandAssociations`/`mediaMetaDataTags`
-  - `WAYFAIR_SUBMIT`：组装 `SubmitProductAdditionsRequest`（parts + answers + media）调用 `productAddition.submit`
+  - `WAYFAIR_DRAFT_REQUEST`：组装“草稿” `SubmitProductAdditionsRequest`（parts + answers + media），但不提交；供前端审查与编辑
+  - `WAITING_FOR_REVIEW`：提交前强制审查（图片选择 + 字段确认 + 明确确认发送）
+  - `WAYFAIR_SUBMIT`：在用户确认后调用 `productAddition.submit`
   - `WAYFAIR_POLL`：轮询 `productAddition.submissions` 直至 SUCCEEDED/FAILED，失败则进入人审修正
-  - `NEEDS_REVIEW`：前端展示 questions（含 possibleAnswers/childQuestions/importanceType）+ validationFlaws，用户补齐/改正后回提
+  - `NEEDS_REVIEW`：提交后 flaws 审查：前端展示 questions（含 possibleAnswers/childQuestions/importanceType）+ validationFlaws，用户补齐/改正后回提
   - `WAYFAIR_CATALOG_READ_VERIFY`：可选，用 `supplierCatalog` 验证是否可读到新 part
 - 取消/暂停：Run 级信号传播到 worker；在安全点落盘并发出事件。
 
@@ -116,13 +127,14 @@ isProject: false
     - Product Catalog（Product Addition）：`https://api.wayfair.io/{sandbox/}v1/product-catalog-api/graphql`（按文档 scopes）
   - 封装 queries：`taxonomyCategories`、`productAddition.questions`、`supplierBrand.brandAssociations`、`media.mediaMetaDataTags`、`productAddition.submit`、`productAddition.submissions`
 - `SupplierConnector`：尺寸补全（暂未知，先接口 + mock 实现）。
-- `ImageProvider`：图片识别/重绘（先接口 + mock；后续可接任意供应商）。
+- `ImageProvider`：图片识别/重绘（优先对接 OpenAI Images Edits；备选 Bedrock/Vertex；统一 input_fidelity/quality/n/size 等参数并记录成本）。
+- `MediaStore`：媒体存储（首选 R2，带生命周期规则；也可扩展 S3/GCS/Azure Blob），负责上传→返回公开 URL→按 prefix 清理。
 
 ## AI Gateway（输出规范化）
 
 - 统一 `AgentResult<T>`：`data/confidence/evidence/model/cost/errors`，用 zod 校验。
 - 解析失败：先 repair（强制 schema）后重试；达到上限进入 NEEDS_REVIEW。
-- Embedding：OpenAI embedding（模型与维度在配置中可切换），向量索引本地持久化。
+- Embedding：用于 taxonomy 文档与产品文本（模型与维度可配置）；向量库本地持久化；同时维护 BM25 索引用于混合搜索。
 
 ## NextJS 前端（本地 UI）
 
@@ -130,10 +142,9 @@ isProject: false
   - Run 列表/新建（输入 amazonUrl、选择 sandbox/prod、marketContext、策略）
   - Run 详情：进度时间线、Job 列表、实时日志、artifact 浏览/预览（JSON/图片）
   - 审查页：
-    - Wayfair `questions` 渲染成表单组件（STRING/DECIMAL/INTEGER/BOOLEAN/SINGLE_CHOICE/MULTI_CHOICE）
+    - 提交前审查：图片候选选择（primary/dimension 各 4 选 1）+ Wayfair 草稿字段/answers 预览与编辑 + “确认发送”
+    - 提交后审查：Wayfair `questions` 渲染成表单组件（STRING/DECIMAL/INTEGER/BOOLEAN/SINGLE_CHOICE/MULTI_CHOICE），展示 `validationFlaws` 并定位到 questionId，允许修正后重提
     - 支持 childQuestions/conditional（importanceType）展示
-    - 展示 `validationFlaws` 定位到具体 questionId
-    - 图片候选选择（primary/dimension）
   - 设置页：输入 sandbox/prod 的 clientId/clientSecret/audience(自动)/supplierId/默认 marketContext；一键“验证并获取 token”
 - UI 仅做渲染与提交，不包含业务逻辑；所有状态从事件流 + REST 获取。
 
@@ -150,7 +161,7 @@ isProject: false
 
 ## 需要同步更新的架构文档
 
-- `project/architecture.md` 已改为 Product Addition 的 discovery→submit→poll→review→resubmit（不再依赖 xlsx 模板）。
+- `project/architecture.md` 已更新：Run 创建前强制 Wayfair 凭据预检 + taxonomy 初始化（缓存 1 个月，向量库 + BM25）；分类改为混合搜索 + Agent；以图生图生成后先上传拿公开 URL；提交前强制人审确认，提交后再基于 flaws 复审/重提。
 
 ## Wayfair API（GraphQL）对接规范（用于其它 agent 直接落地）
 

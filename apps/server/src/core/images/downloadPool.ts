@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
 import { ensureDir } from "../paths";
+import { getImagePool } from "../pools/registry";
 import {
   getRunImagesDir,
   getRunImageIndexPath,
@@ -64,25 +65,6 @@ function buildFileName(url: string, contentType?: string) {
   return `${hash}${ext}`;
 }
 
-async function runWithConcurrency<T, R>(
-  items: T[],
-  limit: number,
-  handler: (item: T) => Promise<R>
-) {
-  const results: R[] = new Array(items.length);
-  let cursor = 0;
-  const concurrency = Math.max(1, limit);
-  const workers = new Array(Math.min(concurrency, items.length)).fill(null).map(async () => {
-    while (cursor < items.length) {
-      const current = cursor;
-      cursor += 1;
-      results[current] = await handler(items[current]);
-    }
-  });
-  await Promise.all(workers);
-  return results;
-}
-
 async function downloadOne(url: string, targetDir: string) {
   const response = await fetch(url);
   if (!response.ok) {
@@ -104,7 +86,6 @@ export async function downloadProductImages(input: {
   runId: string;
   asin: string;
   urls: string[];
-  concurrency: number;
 }): Promise<RunImageIndex | null> {
   const uniqueUrls = Array.from(
     new Set(input.urls.filter((url) => typeof url === "string" && url.length > 0))
@@ -133,7 +114,8 @@ export async function downloadProductImages(input: {
   const targetDir = getRunImagesDir(input.runId, input.asin);
   ensureDir(targetDir);
 
-  const downloaded = await runWithConcurrency(pending, input.concurrency, async (url) => {
+  const pool = getImagePool();
+  const downloaded = await pool.run(pending, async (url) => {
     try {
       const item = await downloadOne(url, targetDir);
       return { item };
@@ -148,9 +130,9 @@ export async function downloadProductImages(input: {
   });
 
   for (const entry of downloaded) {
-    if ("item" in entry) {
+    if ("item" in entry && entry.item) {
       results.push(entry.item);
-    } else if (entry.error) {
+    } else if ("error" in entry && entry.error) {
       errors.push(entry.error);
     }
   }

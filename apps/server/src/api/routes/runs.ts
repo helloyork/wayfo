@@ -1,9 +1,10 @@
-import { Router, Response } from "express";
+import { Router } from "express";
 import fs from "fs";
 import path from "path";
 import { nanoid } from "nanoid";
 import { z } from "zod";
 import { RunEvent } from "@wayfo/shared";
+import { sendError } from "../errors";
 import { eventBus } from "../../core/events/eventBus";
 import { log } from "../../core/logger";
 import { runsRoot } from "../../core/paths";
@@ -34,19 +35,6 @@ const createRunSchema = z.object({
 const actionSchema = z.object({
   action: z.enum(["pause", "resume", "cancel"])
 });
-
-function sendError(
-  res: Response,
-  input: { code: string; message: string; retryable?: boolean; suggestion?: string },
-  status = 400
-) {
-  res.status(status).json({
-    code: input.code,
-    message: input.message,
-    retryable: input.retryable ?? false,
-    suggestion: input.suggestion
-  });
-}
 
 runsRouter.post("/", async (req, res) => {
   const parsed = createRunSchema.safeParse(req.body);

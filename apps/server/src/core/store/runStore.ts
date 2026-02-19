@@ -31,6 +31,7 @@ type JobRow = {
   step: Step;
   status: Job["status"];
   inputHash: string;
+  schemaVersion: string | null;
   attempts: number;
   errorSummary: string | null;
   createdAt: string;
@@ -43,6 +44,7 @@ type ArtifactRow = {
   jobId: string | null;
   type: string;
   path: string;
+  contentHash: string | null;
   schemaVersion: string;
   createdAt: string;
 };
@@ -65,6 +67,58 @@ export function hashInput(payload: unknown) {
     .digest("hex");
 }
 
+function hashContent(payload: unknown) {
+  return createHash("sha256")
+    .update(JSON.stringify(payload))
+    .digest("hex");
+}
+
+function ensureRunDirs(runId: string) {
+  ensureDir(path.join(runsRoot, runId));
+  ensureDir(path.join(runsRoot, runId, "jobs"));
+  ensureDir(path.join(runsRoot, runId, "artifacts"));
+  ensureDir(path.join(runsRoot, runId, "logs"));
+}
+
+function readRunFromDisk(runId: string) {
+  const runFile = path.join(runsRoot, runId, "run.json");
+  return readJson<Run>(runFile);
+}
+
+function readJobFromDisk(runId: string, jobId: string) {
+  const jobPath = path.join(runsRoot, runId, "jobs", `${jobId}.json`);
+  return readJson<Job>(jobPath);
+}
+
+function listJobsFromDisk(runId: string): Job[] {
+  const jobsDir = path.join(runsRoot, runId, "jobs");
+  if (!fs.existsSync(jobsDir)) {
+    return [];
+  }
+  const entries = fs.readdirSync(jobsDir).filter((file) => file.endsWith(".json"));
+  const jobs = entries
+    .map((file) => readJson<Job>(path.join(jobsDir, file)))
+    .filter(Boolean) as Job[];
+  return jobs.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function appendArtifactToJob(runId: string, jobId: string, artifactId: string) {
+  const jobPath = path.join(runsRoot, runId, "jobs", `${jobId}.json`);
+  const current = readJson<Job>(jobPath);
+  if (!current) {
+    return;
+  }
+  if (current.artifactIds.includes(artifactId)) {
+    return;
+  }
+  const next: Job = {
+    ...current,
+    artifactIds: [...current.artifactIds, artifactId],
+    updatedAt: new Date().toISOString()
+  };
+  writeJson(jobPath, next);
+}
+
 export function createRun(input: {
   amazonUrl: string;
   marketContext?: string;
@@ -82,8 +136,8 @@ export function createRun(input: {
     updatedAt: now
   };
 
+  ensureRunDirs(id);
   const runDir = path.join(runsRoot, id);
-  ensureDir(runDir);
   writeJson(path.join(runDir, "run.json"), run);
 
   const db = getDb();
@@ -120,6 +174,18 @@ export function createRun(input: {
 }
 
 export function listRuns(): Run[] {
+  if (fs.existsSync(runsRoot)) {
+    const dirs = fs
+      .readdirSync(runsRoot)
+      .map((entry) => path.join(runsRoot, entry))
+      .filter((entry) => fs.statSync(entry).isDirectory());
+    const runs = dirs
+      .map((dir) => readJson<Run>(path.join(dir, "run.json")))
+      .filter(Boolean) as Run[];
+    if (runs.length > 0) {
+      return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    }
+  }
   const db = getDb();
   const rows = db
     .prepare("select * from runs order by createdAt desc")
@@ -137,9 +203,7 @@ export function listRuns(): Run[] {
 }
 
 export function getRun(runId: string): Run | null {
-  const runFile = path.join(runsRoot, runId, "run.json");
-  const run = readJson<Run>(runFile);
-  return run;
+  return readRunFromDisk(runId);
 }
 
 export function updateRun(runId: string, patch: Partial<Run>): Run {
@@ -185,6 +249,7 @@ export function createJob(input: {
   runId: string;
   step: Step;
   inputHash: string;
+  schemaVersion?: string;
 }): Job {
   const now = new Date().toISOString();
   const id = nanoid();
@@ -194,6 +259,7 @@ export function createJob(input: {
     step: input.step,
     status: "PENDING",
     inputHash: input.inputHash,
+    schemaVersion: input.schemaVersion,
     attempts: 0,
     artifactIds: [],
     createdAt: now,
@@ -201,13 +267,14 @@ export function createJob(input: {
   };
 
   const jobPath = path.join(runsRoot, input.runId, "jobs", `${id}.json`);
+  ensureRunDirs(input.runId);
   writeJson(jobPath, job);
 
   const db = getDb();
   db.prepare(
     `
-      insert into jobs (id, runId, step, status, inputHash, attempts, errorSummary, createdAt, updatedAt)
-      values (@id, @runId, @step, @status, @inputHash, @attempts, @errorSummary, @createdAt, @updatedAt)
+      insert into jobs (id, runId, step, status, inputHash, schemaVersion, attempts, errorSummary, createdAt, updatedAt)
+      values (@id, @runId, @step, @status, @inputHash, @schemaVersion, @attempts, @errorSummary, @createdAt, @updatedAt)
     `
   ).run({
     id: job.id,
@@ -215,6 +282,7 @@ export function createJob(input: {
     step: job.step,
     status: job.status,
     inputHash: job.inputHash,
+    schemaVersion: job.schemaVersion ?? null,
     attempts: job.attempts,
     errorSummary: null,
     createdAt: job.createdAt,
@@ -222,6 +290,75 @@ export function createJob(input: {
   });
 
   return job;
+}
+
+export function getOrCreateJob(input: {
+  runId: string;
+  step: Step;
+  inputHash: string;
+  schemaVersion?: string;
+}): { job: Job; reused: boolean } {
+  const db = getDb();
+  const row = input.schemaVersion
+    ? (db
+        .prepare(
+          `
+            select * from jobs
+            where runId = @runId
+              and step = @step
+              and inputHash = @inputHash
+              and schemaVersion = @schemaVersion
+            order by createdAt desc
+            limit 1
+          `
+        )
+        .get({
+          runId: input.runId,
+          step: input.step,
+          inputHash: input.inputHash,
+          schemaVersion: input.schemaVersion
+        }) as JobRow | undefined)
+    : (db
+        .prepare(
+          `
+            select * from jobs
+            where runId = @runId
+              and step = @step
+              and inputHash = @inputHash
+              and schemaVersion is null
+            order by createdAt desc
+            limit 1
+          `
+        )
+        .get({
+          runId: input.runId,
+          step: input.step,
+          inputHash: input.inputHash
+        }) as JobRow | undefined);
+  if (row) {
+    const existing = readJobFromDisk(input.runId, row.id);
+    if (existing) {
+      return { job: existing, reused: true };
+    }
+    const restored: Job = {
+      id: row.id,
+      runId: row.runId,
+      step: row.step,
+      status: row.status,
+      inputHash: row.inputHash,
+      schemaVersion: row.schemaVersion ?? undefined,
+      attempts: row.attempts,
+      errorSummary: row.errorSummary ?? undefined,
+      artifactIds: [],
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    };
+    const jobPath = path.join(runsRoot, input.runId, "jobs", `${row.id}.json`);
+    ensureRunDirs(input.runId);
+    writeJson(jobPath, restored);
+    return { job: restored, reused: true };
+  }
+  return { job: createJob(input), reused: false };
 }
 
 export function updateJob(
@@ -246,6 +383,7 @@ export function updateJob(
     `
       update jobs
       set status = @status,
+          schemaVersion = @schemaVersion,
           attempts = @attempts,
           errorSummary = @errorSummary,
           updatedAt = @updatedAt
@@ -254,6 +392,7 @@ export function updateJob(
   ).run({
     id: next.id,
     status: next.status,
+    schemaVersion: next.schemaVersion ?? null,
     attempts: next.attempts,
     errorSummary: next.errorSummary ?? null,
     updatedAt: next.updatedAt
@@ -263,6 +402,10 @@ export function updateJob(
 }
 
 export function listJobs(runId: string): Job[] {
+  const fromDisk = listJobsFromDisk(runId);
+  if (fromDisk.length > 0) {
+    return fromDisk;
+  }
   const db = getDb();
   const rows = db
     .prepare("select * from jobs where runId = ? order by createdAt asc")
@@ -273,6 +416,7 @@ export function listJobs(runId: string): Job[] {
     step: row.step,
     status: row.status,
     inputHash: row.inputHash,
+    schemaVersion: row.schemaVersion ?? undefined,
     attempts: row.attempts,
     errorSummary: row.errorSummary ?? undefined,
     artifactIds: [],
@@ -291,6 +435,41 @@ export function createArtifact(input: {
   const now = new Date().toISOString();
   const id = nanoid();
   const filePath = path.join(runsRoot, input.runId, "artifacts", input.relativePath);
+  const contentHash = hashContent(input.content);
+  const db = getDb();
+  const existing = db
+    .prepare(
+      `
+        select * from artifacts
+        where runId = @runId
+          and type = @type
+          and contentHash = @contentHash
+        order by createdAt desc
+        limit 1
+      `
+    )
+    .get({
+      runId: input.runId,
+      type: input.type,
+      contentHash
+    }) as ArtifactRow | undefined;
+  if (existing && fs.existsSync(existing.path)) {
+    if (input.jobId) {
+      appendArtifactToJob(input.runId, input.jobId, existing.id);
+    }
+    return {
+      id: existing.id,
+      runId: existing.runId,
+      jobId: existing.jobId ?? undefined,
+      type: existing.type,
+      path: existing.path,
+      contentHash: existing.contentHash ?? undefined,
+      schemaVersion: existing.schemaVersion,
+      createdAt: existing.createdAt
+    };
+  }
+
+  ensureRunDirs(input.runId);
   writeJson(filePath, input.content);
 
   const artifact: Artifact = {
@@ -299,15 +478,15 @@ export function createArtifact(input: {
     jobId: input.jobId,
     type: input.type,
     path: filePath,
+    contentHash,
     schemaVersion,
     createdAt: now
   };
 
-  const db = getDb();
   db.prepare(
     `
-      insert into artifacts (id, runId, jobId, type, path, schemaVersion, createdAt)
-      values (@id, @runId, @jobId, @type, @path, @schemaVersion, @createdAt)
+      insert into artifacts (id, runId, jobId, type, path, contentHash, schemaVersion, createdAt)
+      values (@id, @runId, @jobId, @type, @path, @contentHash, @schemaVersion, @createdAt)
     `
   ).run({
     id: artifact.id,
@@ -315,9 +494,14 @@ export function createArtifact(input: {
     jobId: artifact.jobId ?? null,
     type: artifact.type,
     path: artifact.path,
+    contentHash: artifact.contentHash ?? null,
     schemaVersion: artifact.schemaVersion,
     createdAt: artifact.createdAt
   });
+
+  if (artifact.jobId) {
+    appendArtifactToJob(artifact.runId, artifact.jobId, artifact.id);
+  }
 
   return artifact;
 }
@@ -333,6 +517,7 @@ export function listArtifacts(runId: string): Artifact[] {
     jobId: row.jobId ?? undefined,
     type: row.type,
     path: row.path,
+    contentHash: row.contentHash ?? undefined,
     schemaVersion: row.schemaVersion,
     createdAt: row.createdAt
   }));

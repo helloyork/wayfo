@@ -81,7 +81,12 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 - `data/runs/<runId>/artifacts/amazon/products/<asin>/images/original/*`
 - `data/runs/<runId>/artifacts/images/classification.json`
 - `data/runs/<runId>/artifacts/images/generated/<type>/*`
-- `data/runs/<runId>/artifacts/wayfair/taxonomyCategories.json`：taxonomyCategories 全量/分页缓存（按 marketContext）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/taxonomyCategories.json`：taxonomyCategories 缓存（按 env + poolId + marketContext，生命周期 1 个月）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/documents.jsonl`：用于检索的“类目文档”（包含 classId/name/path/description/specHints 等）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/vectorstore/*`：taxonomyCategories 本地向量库（LangChain 持久化）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/bm25/*`：BM25 索引（关键词召回）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/meta.json`：初始化元数据（initializedAt/expiresAt/embeddingModel/schemaVersion）
+- `data/runs/<runId>/artifacts/wayfair/taxonomyRef.json`：本次 Run 绑定的 taxonomy cache（env/poolId/marketContextHash/meta 版本）
 - `data/runs/<runId>/artifacts/wayfair/questions.json`：productAddition.questions 的问题树（按 supplierId + classId + marketContext）
 - `data/runs/<runId>/artifacts/wayfair/brandAssociations.json`：supplierBrand.brandAssociations 返回（manufacturerId 候选）
 - `data/runs/<runId>/artifacts/wayfair/mediaMetaDataTags.json`：media.mediaMetaDataTags 返回（documents tags）
@@ -130,6 +135,22 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 ---
 
 Wayfo的工作流分为以下几个步骤（含建议补充）：
+
+## 0. Run 创建前置门禁（必须）
+
+创建 Run 时，如果未完成初始化，则需要先初始化；且前提是 Wayfair 密钥配置正确（Sandbox/Production 应用 ID、密钥和供应商 ID）。
+
+- **Wayfair 密钥预检**：
+  - 对目标环境（sandbox/prod）获取 token 成功
+  - `supplierId` 与 `marketContext` 有效（能够完成最小 discovery 请求）
+- **Taxonomy 初始化（全局缓存，生命周期 1 个月）**：
+  - 通过 Wayfair taxonomy API 分池拉取所有 class 及其可用于检索的描述信息（至少包含 `classId/name/path`；如果 API 提供规范/描述也应一并缓存）
+  - 使用 LangChain 为 taxonomyCategories 创建本地向量库（并同时构建 BM25 索引，用于混合搜索）
+  - 初始化完成后才允许进入后续步骤
+
+实现层面的建议（可优化点）：
+- 把 Run 的创建与“初始化任务”解耦：`POST /runs` 允许先创建 Run（状态 `INITIALIZING`），初始化完成后自动推进；避免前端等待超时。
+- 以 `env + poolId + marketContext` 为缓存 key，并记录 `expiresAt`；过期刷新可后台执行，但刷新期间仍可使用旧索引（读写双版本）以保证可用性。
 
 ## 1. 数据采集
 
@@ -185,13 +206,45 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 然后，程序会使用一个Agent分析产品详细信息，确定产品的尺寸规格是否存在**并且齐全**。如果不存在，该Agent应该返回提取出的ASIN信息。  
 使用该ASIN信息，程序从ASIN查询供应商API中获取实际的尺寸规格。
 
+### Product Embedding（产品信息嵌入）
+
+在拉取到产品信息（含尺寸补全）后，对商品信息构造“可检索文本”并创建嵌入，供后续分类与检索复用：
+
+- **文本构造建议**：`title`、`bullets`、`description`、`productInformation/specs`（键值对）、`dimensions`、材质/颜色/风格等关键字段；对超长字段做裁剪并保留高信息密度片段。
+- **产物建议**：`data/runs/<runId>/artifacts/amazon/products/<asin>/embedding.json`（包含 embeddingModel、文本 hash、向量引用/或直接存向量、生成时间与成本）
+
 ### Classification
 
 随后，程序会使用另一个Agent对产品的“class”进行分类，用于归类到特定Wayfair产品类别下。  
-具体实现：
-1. 初始化时爬取所有Wayfair产品Class以及具体描述（约100条），使用供应商的嵌入API创建向量并且本地储存。
-2. 当需要进行分类时，使用产品的描述等信息对向量进行搜索，使用Langchain.js实现，找出排名前列特定数量的class
-3. 使用高智慧模型，提供产品基础信息（标题和描述）以及前述的class列表，进行综合判断，输出最终的class和一个1~10的置信度分数（并输出证据与候选列表，便于人审）
+具体实现（初始化一次，Run 复用，并引入混合搜索）：
+
+1. **候选召回（Hybrid Search）**
+   - 输入：产品 embedding + 产品关键词（从 title/specs/material/color/style 抽取）。
+   - 召回：分别取 TopK semantic（向量库）与 TopK lexical（BM25），再做 union 去重得到候选集合。
+   - 对候选计算综合分（两类分数需要先归一化/缩放到同一量纲）：
+
+     Final Score =
+     0.6 * embedding_similarity
+     + 0.3 * keyword_match (BM25)
+     + 0.1 * rule_filter (furniture / decor / etc)
+
+   - **可优化点（建议）**：`rule_filter` 更适合做“硬过滤/强约束（先过滤再打分）”而不是 0.1 的软加权；否则会让明显不相关类目仍进入候选与 LLM 复核，增加成本与误判。
+
+2. **LLM 最终判定（Agent）**
+   - 给 Agent：产品信息（标题/描述/specs/尺寸）+ 候选 class 列表（classId/name/path/关键描述片段）+ 候选得分与证据。
+   - 使用 prompt：
+
+     You are a Wayfair taxonomy expert.
+     Given product info and candidate classes,
+     select the most accurate classId.
+
+     Return:
+     - classId
+     - confidence (0-1)
+     - reasoning
+     - fallback_classId (if low confidence)
+
+   - 输出落盘：`artifacts/wayfair/classification.json`，并强制带 `evidence`（命中的关键词/相似片段/Top candidates），用于人审。
 
 所有信息都会本地缓存，用于后续的分析和决策。
 
@@ -227,6 +280,24 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 - 规格图：同上。
 - 其他类型：默认单图直出；如后续需要也可把某类型改成批次多候选。
 
+### 2.3.1 以图生图（Image-to-Image）供应商选择（建议方案）
+
+你当前的需求是“在线、大厂、成本可控”的以图生图。结合可用性与工程落地，建议优先级如下（都支持 image-to-image / edit 类能力）：
+
+- **首选：OpenAI Images Edits（GPT Image）**
+  - 特点：支持多图输入、`input_fidelity`（贴近原图程度）、`quality` 分档；适合“在保留商品结构的前提下做创意重绘”。
+  - 工程建议：在 AI Gateway 做并发与预算硬限制，并对不同图片类型设置不同质量档位（主图/规格图高，其它类型中/低）。
+- **备选：AWS Bedrock（Stability 系列）**
+  - 特点：企业可用性强、权限与审计完善；适合批量与成本控制。
+  - 工程建议：统一封装为 `ImageProvider`，屏蔽不同模型/版本的请求与响应差异。
+- **备选：Google Vertex AI Imagen（Editing）**
+  - 特点：编辑模式丰富（inpaint/outpaint/background swap），对“主图换背景/规格图局部清理”很实用。
+  - 工程建议：能力开通与配额可能需要前置申请，落地时优先做成可选 provider。
+
+无论选哪家，建议都做成可插拔的 `ImageProvider`，并在配置里提供：
+- 每种图片类型的提示词模板（版本化）
+- `sampleCount/n`、尺寸、质量档位、是否使用 mask
+
 ### 2.4 高度可扩展的策略化设计（关键）
 为了让未来“新增图片类型 / 调整哪些类型走批次 / 改候选数量”只改配置，不改业务流程：
 - 图片类型作为 registry（枚举 + 显示名 + 默认提示词模板 key）。
@@ -248,9 +319,22 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 }
 ```
 
-## 3. Wayfair Catalog API（Product Addition，全自动化）
+### 2.5 媒体存储（上传拿到公开 URL，带生命周期）
 
-模板文件（xlsx）下载/解析/填表属于**高维护成本且容错差**的方案。本项目改为使用 Wayfair 的 **Catalog API（GraphQL）** 完成 discovery→submit→poll 的标准化上架流程，实现端到端自动化，并把“人审”作为兜底闭环而非主路径。
+Wayfair 产品创建请求里需要可公开访问的图片 URL，因此图片生成后必须先上传到“带生命周期”的媒体存储服务，获得 URL 后才允许进入后续提交相关步骤：
+
+- **首选：Cloudflare R2**
+  - 支持对象生命周期规则（可按 prefix 设置 N 天后自动删除），适合按 `runs/<runId>/...` 分区清理。
+  - 建议把对象 key 设计为不可猜测（随机前缀/哈希），并配置 bucket 为公开只读（或通过自建边缘/代理提供公开 URL）。
+- **可选替代**：AWS S3 / GCS / Azure Blob
+  - 都支持成熟的 lifecycle policies；如果你最终把图片生成放到 AWS/GCP/Azure，同云存储可以降低链路复杂度与出站成本。
+
+生命周期策略建议（保守值，避免 Wayfair 侧抓取延迟导致失效）：
+- 默认保留 **90 天**；未来可在确认 Wayfair 侧抓取/入库时机后下调到 30 天。
+
+## 3. Wayfair Catalog API（Product Addition，提交前强制审查）
+
+模板文件（xlsx）下载/解析/填表属于**高维护成本且容错差**的方案。本项目改为使用 Wayfair 的 **Catalog API（GraphQL）** 完成 discovery→draft→review→submit→poll 的标准化上架流程：系统自动生成草稿与建议，但在真正提交前由用户确认（降低合规风险与返工成本）。
 
 ### 3.1 Discovery（拿到“本次提交所需的全部约束条件”）
 
@@ -295,6 +379,16 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
   - 无法自动修复则进入 `NEEDS_REVIEW`，由 UI 精确展示 flaw 对应的 `questionId`，用户修正后重新 submit
 
 （可选）当 submission 成功后，可通过 Supplier Catalog Read API 拉取并核验 `supplierPartNumber` 的状态变化，用于“是否可读/是否 live”检查。
+
+## 3.5 提交前审查（Human-in-the-loop，强制步骤）
+
+包括图片生成完成在内，Web 界面需要把该 Run 标记为**待审查**，用户在提交前完成以下确认：
+
+- **图片选择**：以图生图对主图与规格图分别批量生成 4 张候选；用户最终为每类选择**单一结果**作为提交用图片 URL。
+- **字段确认**：展示将要发送给 Wayfair 的核心字段（classId、manufacturerId、supplierPartNumber、media.images、以及将生成的 answers），允许用户修改/确认。
+- **确认发送**：只有用户确认后，才允许执行 `productAddition.submit`。
+
+该步骤的目标是把“合规与不确定性”在真正写入 Wayfair 前拦截掉，从而减少提交失败与后续返工成本。
 
 ## 4. 审查（Human-in-the-loop，兜底闭环）
 

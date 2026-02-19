@@ -1,13 +1,15 @@
 import { z } from "zod";
 
 export const RunStatusSchema = z.enum([
+  "INITIALIZING",
   "PENDING",
   "RUNNING",
   "PAUSED",
   "CANCELLED",
   "FAILED",
   "COMPLETED",
-  "NEEDS_REVIEW"
+  "NEEDS_REVIEW",
+  "WAITING_FOR_REVIEW"
 ]);
 export type RunStatus = z.infer<typeof RunStatusSchema>;
 
@@ -52,6 +54,7 @@ export const JobSchema = z.object({
   step: StepSchema,
   status: JobStatusSchema,
   inputHash: z.string(),
+  schemaVersion: z.string().optional(),
   attempts: z.number(),
   errorSummary: z.string().optional(),
   artifactIds: z.array(z.string()),
@@ -89,6 +92,8 @@ export const EventTypeSchema = z.enum([
   "JOB_STARTED",
   "JOB_PROGRESS",
   "JOB_FAILED",
+  "RUN_INITIALIZING",
+  "WAITING_FOR_REVIEW",
   "NEEDS_REVIEW",
   "LOG"
 ]);
@@ -115,6 +120,9 @@ export const AgentResultSchema = z.object({
   errors: z.unknown().optional()
 });
 export type AgentResult = z.infer<typeof AgentResultSchema>;
+
+export const WayfairEnvSchema = z.enum(["sandbox", "prod"]);
+export type WayfairEnv = z.infer<typeof WayfairEnvSchema>;
 
 export type {
   HasDataAmazonProductResponse,

@@ -31,6 +31,7 @@ export function getDb() {
       step text not null,
       status text not null,
       inputHash text not null,
+      schemaVersion text,
       attempts integer not null,
       errorSummary text,
       createdAt text not null,
@@ -43,6 +44,7 @@ export function getDb() {
       jobId text,
       type text not null,
       path text not null,
+      contentHash text,
       schemaVersion text not null,
       createdAt text not null
     );
@@ -57,6 +59,29 @@ export function getDb() {
       "alter table runs add column enumerateVariants integer not null default 0;"
     );
   }
+
+  const jobColumns = db
+    .prepare("pragma table_info(jobs)")
+    .all() as Array<{ name: string }>;
+  const hasJobSchemaVersion = jobColumns.some((column) => column.name === "schemaVersion");
+  if (!hasJobSchemaVersion) {
+    db.exec("alter table jobs add column schemaVersion text;");
+  }
+
+  const artifactColumns = db
+    .prepare("pragma table_info(artifacts)")
+    .all() as Array<{ name: string }>;
+  const hasContentHash = artifactColumns.some((column) => column.name === "contentHash");
+  if (!hasContentHash) {
+    db.exec("alter table artifacts add column contentHash text;");
+  }
+
+  db.exec(`
+    create index if not exists idx_jobs_idempotency
+      on jobs (runId, step, inputHash, schemaVersion);
+    create index if not exists idx_artifacts_hash
+      on artifacts (runId, type, contentHash);
+  `);
 
   dbInstance = db;
   return db;

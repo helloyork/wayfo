@@ -12,9 +12,19 @@ type AppSettings = {
   updatedAt: string;
 };
 
+type WayfairSettings = {
+  env: "sandbox" | "prod";
+  clientId: string;
+  clientSecret: string;
+  audience: string;
+  supplierId: string;
+  updatedAt: string;
+};
+
 const settingsDir = path.join(dataRoot, "settings");
 const hasDataSettingsPath = path.join(settingsDir, "hasdata.json");
 const appSettingsPath = path.join(settingsDir, "app.json");
+const wayfairSettingsPath = path.join(settingsDir, "wayfair.json");
 
 function readSettings(): HasDataSettings | null {
   if (!fs.existsSync(hasDataSettingsPath)) {
@@ -40,6 +50,19 @@ function readAppSettings(): AppSettings | null {
 function writeAppSettings(next: AppSettings) {
   ensureDir(settingsDir);
   fs.writeFileSync(appSettingsPath, JSON.stringify(next, null, 2));
+}
+
+function readWayfairSettings(): WayfairSettings | null {
+  if (!fs.existsSync(wayfairSettingsPath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(wayfairSettingsPath, "utf-8");
+  return JSON.parse(raw) as WayfairSettings;
+}
+
+function writeWayfairSettings(next: WayfairSettings) {
+  ensureDir(settingsDir);
+  fs.writeFileSync(wayfairSettingsPath, JSON.stringify(next, null, 2));
 }
 
 export function getHasDataApiKey() {
@@ -79,5 +102,28 @@ export function setAppSettings(input: { enumerateVariantsDefault: boolean }) {
     updatedAt: new Date().toISOString()
   };
   writeAppSettings(next);
+  return next;
+}
+
+export function getWayfairSettings() {
+  return readWayfairSettings();
+}
+
+export function setWayfairSettings(input: {
+  env: "sandbox" | "prod";
+  clientId: string;
+  clientSecret: string;
+  audience: string;
+  supplierId: string;
+}) {
+  const next: WayfairSettings = {
+    env: input.env,
+    clientId: input.clientId,
+    clientSecret: input.clientSecret,
+    audience: input.audience,
+    supplierId: input.supplierId,
+    updatedAt: new Date().toISOString()
+  };
+  writeWayfairSettings(next);
   return next;
 }

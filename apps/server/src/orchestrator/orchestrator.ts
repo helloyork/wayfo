@@ -2,10 +2,9 @@ import { nanoid } from "nanoid";
 import { Run, RunEvent, Step, HasDataAmazonProductResponse } from "@wayfo/shared";
 import { eventBus } from "../core/events/eventBus";
 import { log } from "../core/logger";
-import { getImagePoolConcurrency } from "../core/config";
 import {
   createArtifact,
-  createJob,
+  getOrCreateJob,
   hashInput,
   updateJob,
   updateRun
@@ -32,11 +31,24 @@ function emit(event: RunEvent) {
 }
 
 export async function startRun(run: Run) {
+  const initializing = updateRun(run.id, {
+    status: "INITIALIZING",
+    currentStep: undefined
+  });
+  emit({
+    id: nanoid(),
+    type: "RUN_INITIALIZING",
+    runId: initializing.id,
+    data: { status: initializing.status },
+    timestamp: new Date().toISOString()
+  });
+
   const updated = updateRun(run.id, { status: "RUNNING", currentStep: undefined });
   emit({
     id: nanoid(),
     type: "RUN_STARTED",
     runId: updated.id,
+    data: { status: updated.status },
     timestamp: new Date().toISOString()
   });
   log({ level: "info", runId: run.id, message: "Run started" });
@@ -73,18 +85,28 @@ async function runScrapeAmazon(run: Run) {
   updateRun(run.id, { currentStep: "SCRAPE_AMAZON" });
   const apiKey = getHasDataApiKey();
   if (!apiKey) {
-    markNeedsReview(run.id, "缺少 HasData API Key，请先在设置页配置并验证。");
+    markNeedsReview(
+      run.id,
+      "缺少 HasData API Key，请先在设置页配置并验证。",
+      undefined,
+      "WAITING_FOR_REVIEW"
+    );
     return;
   }
 
   const domain = normalizeAmazonDomain(run.amazonUrl);
   const asin = extractAsin(run.amazonUrl);
   if (!asin) {
-    markNeedsReview(run.id, "无法从链接中解析 ASIN，请检查 Amazon 链接。");
+    markNeedsReview(
+      run.id,
+      "无法从链接中解析 ASIN，请检查 Amazon 链接。",
+      undefined,
+      "WAITING_FOR_REVIEW"
+    );
     return;
   }
 
-  const seedJob = createJob({
+  const seedJobResult = getOrCreateJob({
     runId: run.id,
     step: "SCRAPE_AMAZON",
     inputHash: hashInput({
@@ -93,8 +115,10 @@ async function runScrapeAmazon(run: Run) {
       domain,
       asin,
       schemaVersion: amazonProductSchemaVersion
-    })
+    }),
+    schemaVersion: amazonProductSchemaVersion
   });
+  const seedJob = seedJobResult.job;
 
   emit({
     id: nanoid(),
@@ -109,33 +133,78 @@ async function runScrapeAmazon(run: Run) {
     runId: run.id,
     jobId: seedJob.id,
     step: "SCRAPE_AMAZON",
-    message: "Seed job started"
+    message: seedJobResult.reused ? "Seed job reused" : "Seed job started"
   });
-  updateJob(run.id, seedJob.id, { status: "RUNNING", attempts: 1 });
+  if (!seedJobResult.reused) {
+    updateJob(run.id, seedJob.id, { status: "RUNNING", attempts: 1 });
+  } else if (seedJob.status !== "SUCCEEDED" && seedJob.status !== "SKIPPED") {
+    updateJob(run.id, seedJob.id, {
+      status: "RUNNING",
+      attempts: seedJob.attempts + 1
+    });
+  }
 
   let seedSnapshot: AmazonProductSnapshot | null = null;
   try {
-    const seedResult = await fetchAndCacheAsin({
-      runId: run.id,
-      jobId: seedJob.id,
-      domain,
-      asin,
-      apiKey
-    });
-    seedSnapshot = seedResult.product;
-    await downloadImagesForSnapshot(run.id, seedJob.id, seedSnapshot);
-    updateJob(run.id, seedJob.id, {
-      status: seedResult.fromCache ? "SKIPPED" : "SUCCEEDED"
-    });
-    emit({
-      id: nanoid(),
-      type: "JOB_PROGRESS",
-      runId: run.id,
-      jobId: seedJob.id,
-      step: "SCRAPE_AMAZON",
-      message: seedResult.fromCache ? "Seed 命中缓存" : "Seed 采集完成",
-      timestamp: new Date().toISOString()
-    });
+    if (seedJobResult.reused && (seedJob.status === "SUCCEEDED" || seedJob.status === "SKIPPED")) {
+      const cached = readRunCache(run.id, asin);
+      if (cached?.product) {
+        seedSnapshot = cached.product;
+        emit({
+          id: nanoid(),
+          type: "JOB_PROGRESS",
+          runId: run.id,
+          jobId: seedJob.id,
+          step: "SCRAPE_AMAZON",
+          message: "Seed 已完成，跳过采集",
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        const seedResult = await fetchAndCacheAsin({
+          runId: run.id,
+          jobId: seedJob.id,
+          domain,
+          asin,
+          apiKey
+        });
+        seedSnapshot = seedResult.product;
+        await downloadImagesForSnapshot(run.id, seedJob.id, seedSnapshot);
+        updateJob(run.id, seedJob.id, {
+          status: seedResult.fromCache ? "SKIPPED" : "SUCCEEDED"
+        });
+        emit({
+          id: nanoid(),
+          type: "JOB_PROGRESS",
+          runId: run.id,
+          jobId: seedJob.id,
+          step: "SCRAPE_AMAZON",
+          message: seedResult.fromCache ? "Seed 命中缓存" : "Seed 采集完成",
+          timestamp: new Date().toISOString()
+        });
+      }
+    } else {
+      const seedResult = await fetchAndCacheAsin({
+        runId: run.id,
+        jobId: seedJob.id,
+        domain,
+        asin,
+        apiKey
+      });
+      seedSnapshot = seedResult.product;
+      await downloadImagesForSnapshot(run.id, seedJob.id, seedSnapshot);
+      updateJob(run.id, seedJob.id, {
+        status: seedResult.fromCache ? "SKIPPED" : "SUCCEEDED"
+      });
+      emit({
+        id: nanoid(),
+        type: "JOB_PROGRESS",
+        runId: run.id,
+        jobId: seedJob.id,
+        step: "SCRAPE_AMAZON",
+        message: seedResult.fromCache ? "Seed 命中缓存" : "Seed 采集完成",
+        timestamp: new Date().toISOString()
+      });
+    }
   } catch (error) {
     handleJobError(run.id, seedJob.id, "SCRAPE_AMAZON", error);
     return;
@@ -161,7 +230,7 @@ async function runScrapeAmazon(run: Run) {
   const variantAsins =
     seedSnapshot?.variants.map((variant) => variant.asin).filter(Boolean) ?? [];
   for (const variantAsin of variantAsins) {
-    const variantJob = createJob({
+    const variantJobResult = getOrCreateJob({
       runId: run.id,
       step: "SCRAPE_AMAZON",
       inputHash: hashInput({
@@ -169,8 +238,10 @@ async function runScrapeAmazon(run: Run) {
         domain,
         asin: variantAsin,
         schemaVersion: amazonProductSchemaVersion
-      })
+      }),
+      schemaVersion: amazonProductSchemaVersion
     });
+    const variantJob = variantJobResult.job;
     emit({
       id: nanoid(),
       type: "JOB_STARTED",
@@ -179,29 +250,51 @@ async function runScrapeAmazon(run: Run) {
       step: "SCRAPE_AMAZON",
       timestamp: new Date().toISOString()
     });
-    updateJob(run.id, variantJob.id, { status: "RUNNING", attempts: 1 });
+    if (!variantJobResult.reused) {
+      updateJob(run.id, variantJob.id, { status: "RUNNING", attempts: 1 });
+    } else if (variantJob.status !== "SUCCEEDED" && variantJob.status !== "SKIPPED") {
+      updateJob(run.id, variantJob.id, {
+        status: "RUNNING",
+        attempts: variantJob.attempts + 1
+      });
+    }
 
     try {
-      const result = await fetchAndCacheAsin({
-        runId: run.id,
-        jobId: variantJob.id,
-        domain,
-        asin: variantAsin,
-        apiKey
-      });
-      await downloadImagesForSnapshot(run.id, variantJob.id, result.product);
-      updateJob(run.id, variantJob.id, {
-        status: result.fromCache ? "SKIPPED" : "SUCCEEDED"
-      });
-      emit({
-        id: nanoid(),
-        type: "JOB_PROGRESS",
-        runId: run.id,
-        jobId: variantJob.id,
-        step: "SCRAPE_AMAZON",
-        message: result.fromCache ? "变体命中缓存" : "变体采集完成",
-        timestamp: new Date().toISOString()
-      });
+      if (
+        variantJobResult.reused &&
+        (variantJob.status === "SUCCEEDED" || variantJob.status === "SKIPPED")
+      ) {
+        emit({
+          id: nanoid(),
+          type: "JOB_PROGRESS",
+          runId: run.id,
+          jobId: variantJob.id,
+          step: "SCRAPE_AMAZON",
+          message: "变体已完成，跳过采集",
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        const result = await fetchAndCacheAsin({
+          runId: run.id,
+          jobId: variantJob.id,
+          domain,
+          asin: variantAsin,
+          apiKey
+        });
+        await downloadImagesForSnapshot(run.id, variantJob.id, result.product);
+        updateJob(run.id, variantJob.id, {
+          status: result.fromCache ? "SKIPPED" : "SUCCEEDED"
+        });
+        emit({
+          id: nanoid(),
+          type: "JOB_PROGRESS",
+          runId: run.id,
+          jobId: variantJob.id,
+          step: "SCRAPE_AMAZON",
+          message: result.fromCache ? "变体命中缓存" : "变体采集完成",
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       handleJobError(run.id, variantJob.id, "SCRAPE_AMAZON", error);
       return;
@@ -237,8 +330,7 @@ async function downloadImagesForSnapshot(
     const index = await downloadProductImages({
       runId,
       asin: snapshot.asin,
-      urls,
-      concurrency: getImagePoolConcurrency()
+      urls
     });
     if (index) {
       createArtifact({
@@ -285,11 +377,16 @@ function handleJobError(runId: string, jobId: string, step: Step, error: unknown
   });
 }
 
-function markNeedsReview(runId: string, message: string, suggestion?: string) {
-  updateRun(runId, { status: "NEEDS_REVIEW" });
+function markNeedsReview(
+  runId: string,
+  message: string,
+  suggestion?: string,
+  status: "NEEDS_REVIEW" | "WAITING_FOR_REVIEW" = "NEEDS_REVIEW"
+) {
+  updateRun(runId, { status });
   emit({
     id: nanoid(),
-    type: "NEEDS_REVIEW",
+    type: status === "WAITING_FOR_REVIEW" ? "WAITING_FOR_REVIEW" : "NEEDS_REVIEW",
     runId,
     message,
     data: suggestion ? { suggestion } : undefined,
