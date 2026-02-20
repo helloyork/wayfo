@@ -3,6 +3,7 @@ import { fetchJson } from "../../../lib/api";
 import { RunEventStream } from "../../components/RunEventStream";
 import { ReviewQueue } from "../../components/ReviewQueue";
 import { StepOverview } from "../../components/StepOverview";
+import { WayfairReviewPanel } from "../../components/WayfairReviewPanel";
 
 export const dynamic = "force-dynamic";
 
@@ -12,6 +13,8 @@ type RunDetail = {
     amazonUrl: string;
     status: string;
     currentStep?: string;
+    marketContext?: string;
+    enumerateVariants?: boolean;
     createdAt: string;
   };
   jobs: Array<{
@@ -34,38 +37,70 @@ export default async function RunDetailPage({
   params: { runId: string };
 }) {
   const detail = await fetchJson<RunDetail>(`/api/runs/${params.runId}`);
+  const jobStatusCounts = detail.jobs.reduce<Record<string, number>>((acc, job) => {
+    acc[job.status] = (acc[job.status] ?? 0) + 1;
+    return acc;
+  }, {});
+  const artifactTypeCounts = detail.artifacts.reduce<Record<string, number>>((acc, artifact) => {
+    acc[artifact.type] = (acc[artifact.type] ?? 0) + 1;
+    return acc;
+  }, {});
+  const currentStep = detail.run.currentStep;
+  const runStatus = detail.run.status;
   const stepItems = [
     {
+      step: "SCRAPE_AMAZON",
       title: "数据采集",
-      status: detail.run.currentStep === "SCRAPE" ? "进行中" : "待执行",
       detail: "采集 Amazon 商品信息与图片，生成采集摘要。"
     },
     {
-      title: "尺寸补全",
-      status: detail.run.currentStep === "DIMENSION" ? "进行中" : "待执行",
-      detail: "补全尺寸与规格，展示供应商查询状态。"
-    },
-    {
+      step: "WAYFAIR_CLASSIFY",
       title: "类目分类",
-      status: detail.run.currentStep === "CLASSIFY" ? "进行中" : "待执行",
-      detail: "向量检索 + 模型分类，展示候选 class。"
+      detail: "关键词召回 + 模型分类，输出 class 结果。"
     },
     {
-      title: "图片重绘",
-      status: detail.run.currentStep === "IMAGE" ? "进行中" : "待执行",
-      detail: "按批次策略生成候选，展示成本与结果。"
+      step: "WAYFAIR_DISCOVERY",
+      title: "Wayfair Discovery",
+      detail: "获取 questions、brand associations 与 media tags。"
     },
     {
-      title: "模板填充",
-      status: detail.run.currentStep === "TEMPLATE" ? "进行中" : "待执行",
-      detail: "解析模板字段并填充，展示缺失字段。"
+      step: "WAYFAIR_SUBMIT",
+      title: "Wayfair Submit",
+      detail: "自动生成 answers 并提交 product addition。"
     },
     {
-      title: "审查与导出",
-      status: detail.run.currentStep === "REVIEW" ? "待审查" : "待执行",
-      detail: "人工确认后导出并上传，提供审查入口。"
+      step: "WAYFAIR_POLL",
+      title: "Wayfair Poll",
+      detail: "轮询 submissions 状态与 validationFlaws。"
     }
-  ];
+  ].map((item) => {
+    if (runStatus === "COMPLETED") {
+      return { title: item.title, detail: item.detail, status: "完成", badgeTone: "success" as const };
+    }
+    if (runStatus === "NEEDS_REVIEW" || runStatus === "WAITING_FOR_REVIEW") {
+      return {
+        title: item.title,
+        detail: item.detail,
+        status: item.step === currentStep ? "需要审查" : "待执行",
+        badgeTone: item.step === currentStep ? ("warning" as const) : undefined
+      };
+    }
+    if (item.step === currentStep) {
+      return { title: item.title, detail: item.detail, status: "进行中", badgeTone: "warning" as const };
+    }
+    return { title: item.title, detail: item.detail, status: "待执行" };
+  });
+
+  const reviewItems =
+    runStatus === "NEEDS_REVIEW" || runStatus === "WAITING_FOR_REVIEW"
+      ? [
+          {
+            title: "Wayfair ValidationFlaws",
+            description: "需要人工确认并修正后重新提交。",
+            owner: `Run ${detail.run.id}`
+          }
+        ]
+      : [];
 
   return (
     <div className="stack">
@@ -77,29 +112,44 @@ export default async function RunDetailPage({
         </div>
         <div className="muted">{detail.run.amazonUrl}</div>
         <div className="muted">创建时间: {detail.run.createdAt}</div>
+        <div className="row muted" style={{ gap: 12 }}>
+          <span>当前步骤: {detail.run.currentStep ?? "N/A"}</span>
+          <span>Market Context: {detail.run.marketContext ?? "N/A"}</span>
+          <span>变体枚举: {detail.run.enumerateVariants ? "开启" : "关闭"}</span>
+        </div>
+      </div>
+
+      <div className="card stack">
+        <strong>执行摘要</strong>
+        <div className="row muted" style={{ gap: 12 }}>
+          <span>Jobs: {detail.jobs.length}</span>
+          <span>Artifacts: {detail.artifacts.length}</span>
+        </div>
+        <div className="row muted" style={{ gap: 12 }}>
+          {Object.keys(jobStatusCounts).length === 0
+            ? "暂无 Job"
+            : Object.entries(jobStatusCounts).map(([status, count]) => (
+                <span key={status}>
+                  {status}: {count}
+                </span>
+              ))}
+        </div>
+        <div className="row muted" style={{ gap: 12, flexWrap: "wrap" }}>
+          {Object.keys(artifactTypeCounts).length === 0
+            ? "暂无产物"
+            : Object.entries(artifactTypeCounts).map(([type, count]) => (
+                <span key={type}>
+                  {type}: {count}
+                </span>
+              ))}
+        </div>
       </div>
 
       <StepOverview steps={stepItems} />
 
-      <ReviewQueue
-        items={[
-          {
-            title: "字段缺失",
-            description: "显示缺失字段与建议值。",
-            owner: `Run ${detail.run.id}`
-          },
-          {
-            title: "图片候选",
-            description: "展示主图/规格图候选选择。",
-            owner: `Run ${detail.run.id}`
-          },
-          {
-            title: "合规检查",
-            description: "展示合规风险提示与确认记录。",
-            owner: `Run ${detail.run.id}`
-          }
-        ]}
-      />
+      <ReviewQueue items={reviewItems} />
+
+      <WayfairReviewPanel runId={detail.run.id} />
 
       <RunEventStream runId={detail.run.id} />
 

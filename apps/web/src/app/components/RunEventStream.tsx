@@ -52,8 +52,9 @@ export function RunEventStream({ runId }: { runId: string }) {
         ) : (
           events.map((event) => (
             <div key={event.id} className="muted">
-              {event.timestamp} · {event.type}{" "}
-              {event.step ? `(${event.step})` : ""} {event.message ?? ""}
+              {event.timestamp} · {event.type} {event.step ? `(${event.step})` : ""}{" "}
+              {event.message ?? ""}
+              {event.data?.err ? ` · ${JSON.stringify(event.data.err)}` : ""}
             </div>
           ))
         )}

@@ -7,7 +7,7 @@ import { CreateRunForm } from "./CreateRunForm";
 
 type InitStatus = {
   ready: boolean;
-  prerequisites: { openaiKey: boolean; wayfair: boolean };
+  prerequisites: { wayfair: boolean };
   activeEnv: "sandbox" | "prod" | null;
   marketContextValid: boolean;
   taxonomy: {
@@ -130,16 +130,12 @@ export function RunEntryGate() {
       <div className="card stack">
         <div className="row">
           <strong>初始化</strong>
-          <span className="muted">首次使用需要先初始化 taxonomy（向量库 + BM25）。</span>
+          <span className="muted">首次使用需要先初始化 taxonomy</span>
         </div>
 
         <div className="muted">
           前置条件：
           {" "}
-          <span>
-            OpenAI Key {status?.prerequisites.openaiKey ? "✅" : "❌"}
-          </span>
-          {" · "}
           <span>
             Wayfair 凭据 {status?.prerequisites.wayfair ? "✅" : "❌"}
           </span>
@@ -173,7 +169,6 @@ export function RunEntryGate() {
             onClick={onStartInit}
             disabled={
               loading ||
-              !status?.prerequisites.openaiKey ||
               !status?.prerequisites.wayfair ||
               !status?.marketContextValid ||
               status?.task?.status === "RUNNING"

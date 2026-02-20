@@ -70,7 +70,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 ### 核心概念
 - **Run**：用户发起的一次端到端处理（一个 Amazon 链接/ASIN；默认只处理该产品，变体可配置）。
 - **Job**：Run 中的一个可重试单元（例如“采集页面”“生成图片批次”“Wayfair discovery/submit/poll”）。
-- **Artifact**：Job 的输出产物（JSON、图片、向量索引等）。
+- **Artifact**：Job 的输出产物（JSON、图片、BM25 索引等）。
 
 ### 建议的本地目录布局（可调）
 - `data/runs/<runId>/run.json`：Run 元信息、当前状态、时间戳、版本、成本汇总
@@ -83,9 +83,8 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 - `data/runs/<runId>/artifacts/images/generated/<type>/*`
 - `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/taxonomyCategories.json`：taxonomyCategories 缓存（按 env + poolId + marketContext，生命周期 1 个月）
 - `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/documents.jsonl`：用于检索的“类目文档”（包含 classId/name/path/description/specHints 等）
-- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/vectorstore/*`：taxonomyCategories 本地向量库（LangChain 持久化）
 - `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/bm25/*`：BM25 索引（关键词召回）
-- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/meta.json`：初始化元数据（initializedAt/expiresAt/embeddingModel/schemaVersion）
+- `data/cache/wayfair/taxonomy/<env>/<poolId>/<marketContextHash>/meta.json`：初始化元数据（initializedAt/expiresAt/schemaVersion）
 - `data/runs/<runId>/artifacts/wayfair/taxonomyRef.json`：本次 Run 绑定的 taxonomy cache（env/poolId/marketContextHash/meta 版本）
 - `data/runs/<runId>/artifacts/wayfair/questions.json`：productAddition.questions 的问题树（按 supplierId + classId + marketContext）
 - `data/runs/<runId>/artifacts/wayfair/brandAssociations.json`：supplierBrand.brandAssociations 返回（manufacturerId 候选）
@@ -145,7 +144,7 @@ Wayfo的工作流分为以下几个步骤（含建议补充）：
   - `supplierId` 与 `marketContext` 有效（能够完成最小 discovery 请求）
 - **Taxonomy 初始化（全局缓存，生命周期 1 个月）**：
   - 通过 Wayfair taxonomy API 分池拉取所有 class 及其可用于检索的描述信息（至少包含 `classId/name/path`；如果 API 提供规范/描述也应一并缓存）
-  - 使用 LangChain 为 taxonomyCategories 创建本地向量库（并同时构建 BM25 索引，用于混合搜索）
+  - 构建 BM25 索引，用于关键词召回
   - 初始化完成后才允许进入后续步骤
 
 实现层面的建议（可优化点）：
@@ -206,29 +205,22 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 然后，程序会使用一个Agent分析产品详细信息，确定产品的尺寸规格是否存在**并且齐全**。如果不存在，该Agent应该返回提取出的ASIN信息。  
 使用该ASIN信息，程序从ASIN查询供应商API中获取实际的尺寸规格。
 
-### Product Embedding（产品信息嵌入）
+### Product Keywords（产品关键词抽取）
 
-在拉取到产品信息（含尺寸补全）后，对商品信息构造“可检索文本”并创建嵌入，供后续分类与检索复用：
+在拉取到产品信息（含尺寸补全）后，对商品信息抽取关键词，供后续分类与检索复用：
 
 - **文本构造建议**：`title`、`bullets`、`description`、`productInformation/specs`（键值对）、`dimensions`、材质/颜色/风格等关键字段；对超长字段做裁剪并保留高信息密度片段。
-- **产物建议**：`data/runs/<runId>/artifacts/amazon/products/<asin>/embedding.json`（包含 embeddingModel、文本 hash、向量引用/或直接存向量、生成时间与成本）
+- **产物建议**：`data/runs/<runId>/artifacts/wayfair/classification.json`（包含关键词、候选与最终判定）
 
 ### Classification
 
 随后，程序会使用另一个Agent对产品的“class”进行分类，用于归类到特定Wayfair产品类别下。  
 具体实现（初始化一次，Run 复用，并引入混合搜索）：
 
-1. **候选召回（Hybrid Search）**
-   - 输入：产品 embedding + 产品关键词（从 title/specs/material/color/style 抽取）。
-   - 召回：分别取 TopK semantic（向量库）与 TopK lexical（BM25），再做 union 去重得到候选集合。
-   - 对候选计算综合分（两类分数需要先归一化/缩放到同一量纲）：
-
-     Final Score =
-     0.6 * embedding_similarity
-     + 0.3 * keyword_match (BM25)
-     + 0.1 * rule_filter (furniture / decor / etc)
-
-   - **可优化点（建议）**：`rule_filter` 更适合做“硬过滤/强约束（先过滤再打分）”而不是 0.1 的软加权；否则会让明显不相关类目仍进入候选与 LLM 复核，增加成本与误判。
+1. **候选召回（BM25 + Keywords）**
+   - 输入：产品关键词（从 title/specs/material/color/style 抽取）。
+   - 召回：BM25 TopK（关键词召回）得到候选集合。
+   - **可优化点（建议）**：`rule_filter` 更适合做“硬过滤/强约束（先过滤再打分）”，避免明显不相关类目进入候选与 LLM 复核。
 
 2. **LLM 最终判定（Agent）**
    - 给 Agent：产品信息（标题/描述/specs/尺寸）+ 候选 class 列表（classId/name/path/关键描述片段）+ 候选得分与证据。

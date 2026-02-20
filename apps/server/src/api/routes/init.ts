@@ -2,7 +2,6 @@ import { Router } from "express";
 import { z } from "zod";
 import { sendError } from "../errors";
 import { getWayfairActiveSettings } from "../../core/store/settingsStore";
-import { getOpenAiApiKey } from "../../core/store/settingsStore";
 import { getWayfairPoolId } from "../../core/config";
 import {
   getTaxonomyCacheRootDir,
@@ -85,7 +84,6 @@ function getTaskKey(input: { env: string; poolId: string; marketContextHash: str
 }
 
 initRouter.get("/status", (req, res) => {
-  const openaiReady = Boolean(getOpenAiApiKey());
   const wayfair = getWayfairActiveSettings();
   const wayfairReady = Boolean(wayfair?.clientId && wayfair?.clientSecret && wayfair?.audience);
 
@@ -94,7 +92,7 @@ initRouter.get("/status", (req, res) => {
   if (!marketContext) {
     return res.json({
       ready: false,
-      prerequisites: { openaiKey: openaiReady, wayfair: wayfairReady },
+      prerequisites: { wayfair: wayfairReady },
       activeEnv: wayfair?.env ?? null,
       marketContextValid: false,
       taxonomy: { state: "MISSING" as const },
@@ -131,7 +129,7 @@ initRouter.get("/status", (req, res) => {
 
   return res.json({
     ready: ready,
-    prerequisites: { openaiKey: openaiReady, wayfair: wayfairReady },
+    prerequisites: { wayfair: wayfairReady },
     activeEnv: wayfair?.env ?? null,
     marketContextValid: true,
     taxonomy: {
@@ -144,13 +142,12 @@ initRouter.get("/status", (req, res) => {
 });
 
 initRouter.post("/taxonomy", async (req, res) => {
-  const openaiReady = Boolean(getOpenAiApiKey());
   const wayfair = getWayfairActiveSettings();
   const wayfairReady = Boolean(wayfair?.clientId && wayfair?.clientSecret && wayfair?.audience);
-  if (!openaiReady || !wayfairReady || !wayfair) {
+  if (!wayfairReady || !wayfair) {
     return sendError(res, {
       code: "INIT_PREREQUISITES_MISSING",
-      message: "初始化前置条件未满足：请先配置 OpenAI API Key 与 Wayfair 凭据"
+      message: "初始化前置条件未满足：请先配置 Wayfair 凭据"
     });
   }
 

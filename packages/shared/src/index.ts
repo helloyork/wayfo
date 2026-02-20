@@ -125,6 +125,35 @@ export const WayfairEnvSchema = z.enum(["sandbox", "prod"]);
 export type WayfairEnv = z.infer<typeof WayfairEnvSchema>;
 
 export type {
+  WayfairAnswer,
+  WayfairBrandAssociationsPageInfo,
+  WayfairBrandAssociationsResponse,
+  WayfairBrandInput,
+  WayfairCountryInput,
+  WayfairMarketContextInput,
+  WayfairMediaDocumentInput,
+  WayfairMediaDocumentTypeInput,
+  WayfairMediaInput,
+  WayfairMediaMetaDataTag,
+  WayfairMediaMetaDataTagSet,
+  WayfairMediaMetaDataTagTypeInput,
+  WayfairOperationStatus,
+  WayfairPossibleAnswer,
+  WayfairProductAdditionQuestion,
+  WayfairProductAdditionStatus,
+  WayfairProductAdditionSubmission,
+  WayfairProductPartWithAnswers,
+  WayfairQuestionAnswerType,
+  WayfairQuestionImportanceType,
+  WayfairSubmitProductAdditionRequest,
+  WayfairSubmitProductAdditionsRequest,
+  WayfairSubmitProductAdditionsResponse,
+  WayfairSupplierBrandAssociation,
+  WayfairValidationFlaw,
+  WayfairValidationFlawType
+} from "./wayfair";
+
+export type {
   HasDataAmazonProductResponse,
   HasDataBadges,
   HasDataPrice,

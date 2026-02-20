@@ -1,12 +1,12 @@
 ---
 name: wayfo-implementation-guide
-overview: 基于 project/architecture.md 的最新“架构变迁”要求，规划 local-first 的 Node.js 后端 + 本地 NextJS 前端落地方案：创建 Run 前强制 Wayfair 凭据预检 + taxonomy 初始化（向量库 + BM25，缓存 1 个月）；Run 内产品 embedding；分类使用混合搜索 + Agent 判定；以图生图生成候选后上传到带生命周期的媒体存储拿到公开 URL；提交 Wayfair 前强制人审确认（图片选择 + 字段确认），再 submit→poll→flaws→复审/重提。
+overview: 基于 project/architecture.md 的最新“架构变迁”要求，规划 local-first 的 Node.js 后端 + 本地 NextJS 前端落地方案：创建 Run 前强制 Wayfair 凭据预检 + taxonomy 初始化（BM25 缓存 1 个月）；Run 内关键词抽取；分类使用 BM25 + 关键词召回 + Agent 判定；以图生图生成候选后上传到带生命周期的媒体存储拿到公开 URL；提交 Wayfair 前强制人审确认（图片选择 + 字段确认），再 submit→poll→flaws→复审/重提。
 todos:
   - id: workspace_scaffold
     content: 初始化 monorepo：apps/server（Node API + orchestrator）/apps/web（NextJS UI）/packages/shared（schemas/types）与一键启动 CLI。
     status: completed
   - id: core_models_storage
-    content: 实现 Run/Job/Artifact 模型、文件系统 artifact store、SQLite 索引、幂等键与断点续跑读取策略（含全局 cache：taxonomy/vectorstore/bm25）。
+    content: 实现 Run/Job/Artifact 模型、文件系统 artifact store、SQLite 索引、幂等键与断点续跑读取策略（含全局 cache：taxonomy/bm25）。
     status: completed
   - id: events_api
     content: 实现 REST + SSE 事件协议、统一错误结构、结构化日志（终端+JSONL），并支持 INITIALIZING/WAITING_FOR_REVIEW 等状态事件。
@@ -18,17 +18,17 @@ todos:
     content: 实现 Wayfair OAuth token 获取与缓存/刷新（sandbox+prod），GraphQL client 与基础错误处理，并提供“凭据预检”接口。
     status: completed
   - id: wayfair_taxonomy_init
-    content: 实现 taxonomy 初始化门禁：按 env+poolId+marketContext 拉取 taxonomyCategories，构建 documents.jsonl、LangChain 本地向量库与 BM25 索引；缓存 1 个月；支持后台刷新与双版本切换。
+    content: 实现 taxonomy 初始化门禁：按 env+poolId+marketContext 拉取 taxonomyCategories，构建 documents.jsonl 与 BM25 索引；缓存 1 个月；支持后台刷新与双版本切换。
     status: completed
   - id: amazon_connector
     content: 实现基于 HasData 的 Amazon 商品采集 + 缓存落盘（按 ASIN 幂等）+ 变体枚举可配置（默认关闭）+ 失败降级/人审闭环。
     status: completed
   - id: product_embedding
-    content: Run 内构造产品检索文本并创建 embedding（落盘），供分类混合搜索与证据展示复用。
-    status: pending
+    content: Run 内构造产品关键词与检索文本（不做 embedding），供 BM25 召回与证据展示复用。
+    status: completed
   - id: classification_hybrid
-    content: 实现混合召回（向量 TopK + BM25 TopK union）+ 综合打分（embedding/BM25/rule_filter）+ Agent 最终判定（输出 classId/confidence/reasoning/fallback + evidence）。
-    status: pending
+    content: 实现 BM25 + 关键词召回 + Agent 最终判定（输出 classId/confidence/reasoning/fallback + evidence）。
+    status: completed
   - id: image_provider_pipeline
     content: 落地以图生图 provider（优先 OpenAI Images Edits；备选 Bedrock/Vertex），并实现图片类型识别→plan→批次生成（主图/规格图 4 候选）产物落盘。
     status: pending
@@ -95,12 +95,16 @@ isProject: false
   - `RUN_INITIALIZING`：创建 Run 后进入初始化门禁（Wayfair 凭据预检 + taxonomy 初始化/复用），完成后才允许推进
   - `SCRAPE_AMAZON`：通过 HasData 获取商品快照（默认只处理输入 ASIN；变体枚举与 fan-out 可配置，默认关闭；按 ASIN 幂等缓存）→ `artifacts/amazon/products/<asin>/`** + 原图下载缓存
   - `DIMENSION_ENRICH`：检查尺寸是否齐全；不齐全则走 Supplier Connector（可插拔）补全 → `artifacts/dimensions.json`
-  - `PRODUCT_EMBEDDING`：构造产品检索文本并创建 embedding（落盘）→ `artifacts/amazon/products/<asin>/embedding.json`
-  - `WAYFAIR_CLASSIFY`：混合搜索（向量 + BM25 + rule_filter）召回候选 + Agent 最终判定 → `artifacts/wayfair/classification.json`
+  - `WAYFAIR_CLASSIFY`：BM25 + 关键词召回候选 + Agent 最终判定 → `artifacts/wayfair/classification.json`
   - `IMAGE_CLASSIFY`：多模态/图片识别将原图归类 primary/dimension/... → `artifacts/images/classification.json`
   - `IMAGE_PLAN`：策略配置驱动生成 generation plan → `artifacts/images/plan.json`
   - `IMAGE_GENERATE`：按 plan 批次生成（primary/dimension 默认 4 候选）→ `artifacts/images/generated/`**
   - `MEDIA_UPLOAD`：把生成图片上传到媒体存储（R2/S3…）并获得公开 URL，落盘候选 URL 列表
+  
+  IMPORTANT（当前占位符说明）：
+  - 目前 Wayfair 提交图片直接使用 Amazon 原图 URL 作为占位符。
+  - 占位图不会经过图片生成或媒体上传流程。
+  - 后续启用图片生成与媒体存储时必须替换该占位逻辑。
   - `WAYFAIR_DISCOVERY`：Catalog/Product Addition discovery：`taxonomyCategories`/`productAddition.questions`/`brandAssociations`/`mediaMetaDataTags`
   - `WAYFAIR_DRAFT_REQUEST`：组装“草稿” `SubmitProductAdditionsRequest`（parts + answers + media），但不提交；供前端审查与编辑
   - `WAITING_FOR_REVIEW`：提交前强制审查（图片选择 + 字段确认 + 明确确认发送）
@@ -114,7 +118,7 @@ isProject: false
 
 - AmazonDataApiPool：限制并发与速率；统一重试/熔断/预算；对 `429/5xx` 做指数退避，保证成本与稳定性可控。
 - WayfairApiPool：GraphQL QPS 限制（按文档 10 rps discovery；submit 1/s）+ `Retry-After`/指数退避。
-- ModelPool：LLM/embedding 并发与预算控制；记录 cost。
+- ModelPool：LLM 并发与预算控制；记录 cost。
 - ImagePool：图片生成并发与批次（primary/dimension 4 候选一批）。
 
 ## Connectors（可插拔）
@@ -134,7 +138,7 @@ isProject: false
 
 - 统一 `AgentResult<T>`：`data/confidence/evidence/model/cost/errors`，用 zod 校验。
 - 解析失败：先 repair（强制 schema）后重试；达到上限进入 NEEDS_REVIEW。
-- Embedding：用于 taxonomy 文档与产品文本（模型与维度可配置）；向量库本地持久化；同时维护 BM25 索引用于混合搜索。
+- Keyword Extract + BM25：用于 taxonomy 文档与产品文本的关键词召回；供 Agent 判定候选类目。
 
 ## NextJS 前端（本地 UI）
 
@@ -161,7 +165,7 @@ isProject: false
 
 ## 需要同步更新的架构文档
 
-- `project/architecture.md` 已更新：Run 创建前强制 Wayfair 凭据预检 + taxonomy 初始化（缓存 1 个月，向量库 + BM25）；分类改为混合搜索 + Agent；以图生图生成后先上传拿公开 URL；提交前强制人审确认，提交后再基于 flaws 复审/重提。
+- `project/architecture.md` 已更新：Run 创建前强制 Wayfair 凭据预检 + taxonomy 初始化（缓存 1 个月，BM25）；分类改为 BM25 + 关键词召回 + Agent；以图生图生成后先上传拿公开 URL；提交前强制人审确认，提交后再基于 flaws 复审/重提。
 
 ## Wayfair API（GraphQL）对接规范（用于其它 agent 直接落地）
 

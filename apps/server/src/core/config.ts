@@ -86,3 +86,43 @@ export function getTaxonomyPageSize() {
   const allowed = [10, 20, 25, 50];
   return allowed.includes(parsed) ? parsed : 50;
 }
+
+export function getWayfairClassifyModel() {
+  const raw = process.env.WAYFAIR_CLASSIFY_MODEL;
+  if (!raw) {
+    return "gpt-4o-mini";
+  }
+  return raw.trim() || "gpt-4o-mini";
+}
+
+export function getWayfairAnswerModel() {
+  const raw = process.env.WAYFAIR_ANSWER_MODEL;
+  if (!raw) {
+    return "gpt-4o-mini";
+  }
+  return raw.trim() || "gpt-4o-mini";
+}
+
+export function getWayfairClassifyCandidateLimit() {
+  const raw = process.env.WAYFAIR_CLASSIFY_CANDIDATE_LIMIT;
+  if (!raw) {
+    return 12;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 12;
+  }
+  return Math.min(Math.max(Math.floor(parsed), 5), 50);
+}
+
+export function getWayfairClassifyKeywordLimit() {
+  const raw = process.env.WAYFAIR_CLASSIFY_KEYWORD_LIMIT;
+  if (!raw) {
+    return 24;
+  }
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    return 24;
+  }
+  return Math.min(Math.max(Math.floor(parsed), 8), 80);
+}

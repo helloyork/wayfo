@@ -1,17 +1,9 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
-import { Document } from "@langchain/core/documents";
-import { OpenAIEmbeddings } from "@langchain/openai";
-import { HNSWLib } from "@langchain/community/vectorstores/hnswlib";
 import { dataRoot, ensureDir } from "../paths";
 import { log } from "../logger";
-import {
-  getTaxonomyCacheMaxAgeDays,
-  getTaxonomyEmbeddingModel,
-  getTaxonomyPageSize
-} from "../config";
-import { getOpenAiApiKey } from "../store/settingsStore";
+import { getTaxonomyCacheMaxAgeDays, getTaxonomyPageSize } from "../config";
 import { wayfairGraphqlRequest, type WayfairEnv } from "../../connectors/wayfair";
 
 export type MarketContext = {
@@ -23,7 +15,6 @@ export type MarketContext = {
 export type TaxonomyInitPhase =
   | "FETCHING_TAXONOMY"
   | "WRITING_DOCUMENTS"
-  | "BUILDING_VECTORSTORE"
   | "BUILDING_BM25"
   | "FINALIZING";
 
@@ -75,7 +66,6 @@ type TaxonomyCacheMeta = {
   marketContext: MarketContext;
   marketContextHash: string;
   schemaVersion: string;
-  embeddingModel: string;
   initializedAt: string;
   expiresAt: string;
   activeVersion: string;
@@ -210,7 +200,6 @@ function taxonomyArtifactsPath(dir: string) {
   return {
     taxonomyCategories: path.join(dir, "taxonomyCategories.json"),
     documents: path.join(dir, "documents.jsonl"),
-    vectorstore: path.join(dir, "vectorstore"),
     bm25: path.join(dir, "bm25", "index.json")
   };
 }
@@ -220,9 +209,7 @@ export function isTaxonomyCacheVersionReady(versionDirPath: string) {
   return (
     fs.existsSync(artifacts.taxonomyCategories) &&
     fs.existsSync(artifacts.documents) &&
-    fs.existsSync(artifacts.bm25) &&
-    fs.existsSync(artifacts.vectorstore) &&
-    fs.statSync(artifacts.vectorstore).isDirectory()
+    fs.existsSync(artifacts.bm25)
   );
 }
 
@@ -239,14 +226,6 @@ function buildDocuments(categories: TaxonomyCategory[]): TaxonomyDocument[] {
       text
     };
   });
-}
-
-function requireOpenAiKey() {
-  const apiKey = getOpenAiApiKey();
-  if (!apiKey) {
-    throw new Error("缺少 OpenAI API Key，无法构建 taxonomy 向量库。");
-  }
-  return apiKey;
 }
 
 function writeDocumentsJsonl(filePath: string, docs: TaxonomyDocument[]) {
@@ -337,7 +316,6 @@ async function buildTaxonomyVersion(input: {
   version: string;
   marketContext: MarketContext;
   credentials: WayfairCredentials;
-  embeddingModel: string;
   onProgress?: (progress: TaxonomyInitProgress) => void;
 }) {
   const versionRoot = ensureVersionDir(input.root, input.version);
@@ -359,31 +337,6 @@ async function buildTaxonomyVersion(input: {
   });
   const documents = buildDocuments(categories);
   writeDocumentsJsonl(artifacts.documents, documents);
-
-  const apiKey = requireOpenAiKey();
-  input.onProgress?.({
-    phase: "BUILDING_VECTORSTORE",
-    message: "构建本地向量库（LangChain + HNSWLib）..."
-  });
-  const embeddings = new OpenAIEmbeddings({
-    model: input.embeddingModel,
-    apiKey
-  });
-  const vectorDocs = documents.map(
-    (doc) =>
-      new Document({
-        pageContent: doc.text,
-        metadata: {
-          classId: doc.classId,
-          name: doc.name,
-          path: doc.path,
-          description: doc.description
-        }
-      })
-  );
-  const store = await HNSWLib.fromDocuments(vectorDocs, embeddings);
-  ensureDir(artifacts.vectorstore);
-  await store.save(artifacts.vectorstore);
 
   input.onProgress?.({
     phase: "BUILDING_BM25",
@@ -408,7 +361,6 @@ export async function ensureTaxonomyCache(input: {
   const contextHash = marketContextHash(input.marketContext);
   const root = cacheRoot(input.credentials.env, input.poolId, contextHash);
   const maxAgeDays = getTaxonomyCacheMaxAgeDays();
-  const embeddingModel = getTaxonomyEmbeddingModel();
   const existing = readMeta(root);
   const existingVersionDir = existing ? resolveActiveVersionDir(root, existing) : null;
   if (existing && existingVersionDir) {
@@ -439,7 +391,6 @@ export async function ensureTaxonomyCache(input: {
       marketContext: input.marketContext,
       credentials: input.credentials,
       previousVersion: existing.activeVersion,
-      embeddingModel,
       maxAgeDays
     }).catch((error) => {
       const failed = readMeta(root);
@@ -468,8 +419,7 @@ export async function ensureTaxonomyCache(input: {
     root,
     version,
     marketContext: input.marketContext,
-    credentials: input.credentials,
-    embeddingModel
+    credentials: input.credentials
   });
   const now = new Date().toISOString();
   const meta: TaxonomyCacheMeta = {
@@ -478,7 +428,6 @@ export async function ensureTaxonomyCache(input: {
     marketContext: input.marketContext,
     marketContextHash: contextHash,
     schemaVersion: taxonomySchemaVersion,
-    embeddingModel,
     initializedAt: now,
     expiresAt: resolveExpiry(maxAgeDays),
     activeVersion: version
@@ -500,7 +449,6 @@ export async function initializeTaxonomyCacheNow(input: {
   const contextHash = marketContextHash(input.marketContext);
   const root = cacheRoot(input.credentials.env, input.poolId, contextHash);
   const maxAgeDays = getTaxonomyCacheMaxAgeDays();
-  const embeddingModel = getTaxonomyEmbeddingModel();
   const existing = readMeta(root);
 
   const version = `v-${Date.now()}`;
@@ -509,7 +457,6 @@ export async function initializeTaxonomyCacheNow(input: {
     version,
     marketContext: input.marketContext,
     credentials: input.credentials,
-    embeddingModel,
     onProgress: input.onProgress
   });
 
@@ -524,7 +471,6 @@ export async function initializeTaxonomyCacheNow(input: {
     marketContext: input.marketContext,
     marketContextHash: contextHash,
     schemaVersion: taxonomySchemaVersion,
-    embeddingModel,
     initializedAt: now,
     expiresAt: resolveExpiry(maxAgeDays),
     activeVersion: version,
@@ -543,7 +489,6 @@ async function refreshTaxonomyCache(input: {
   marketContext: MarketContext;
   credentials: WayfairCredentials;
   previousVersion: string;
-  embeddingModel: string;
   maxAgeDays: number;
 }) {
   const version = `v-${Date.now()}`;
@@ -552,7 +497,6 @@ async function refreshTaxonomyCache(input: {
     version,
     marketContext: input.marketContext,
     credentials: input.credentials,
-    embeddingModel: input.embeddingModel
   });
   const now = new Date().toISOString();
   const nextMeta: TaxonomyCacheMeta = {
@@ -561,7 +505,6 @@ async function refreshTaxonomyCache(input: {
     marketContext: input.marketContext,
     marketContextHash: marketContextHash(input.marketContext),
     schemaVersion: taxonomySchemaVersion,
-    embeddingModel: input.embeddingModel,
     initializedAt: now,
     expiresAt: resolveExpiry(input.maxAgeDays),
     activeVersion: version,

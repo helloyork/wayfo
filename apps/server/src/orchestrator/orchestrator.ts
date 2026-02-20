@@ -1,5 +1,15 @@
 import { nanoid } from "nanoid";
-import { Run, RunEvent, Step, HasDataAmazonProductResponse } from "@wayfo/shared";
+import {
+  Run,
+  RunEvent,
+  Step,
+  HasDataAmazonProductResponse,
+  WayfairMediaMetaDataTagSet,
+  WayfairProductAdditionQuestion,
+  WayfairSupplierBrandAssociation
+} from "@wayfo/shared";
+import fs from "fs";
+import path from "path";
 import { eventBus } from "../core/events/eventBus";
 import { log } from "../core/logger";
 import {
@@ -20,13 +30,33 @@ import {
 import { readGlobalCache, readRunCache, writeGlobalCache } from "../core/amazon/cache";
 import { getWayfairPoolId } from "../core/config";
 import { ensureTaxonomyCache, parseMarketContext } from "../core/wayfair/taxonomyInit";
+import { classifyWayfairClass } from "../core/wayfair/classification";
+import {
+  fetchWayfairBrandAssociations,
+  fetchWayfairMediaMetaDataTags,
+  fetchWayfairQuestions
+} from "../core/wayfair/discovery";
+import { submitWayfairProductAdditions, fetchWayfairSubmissions } from "../core/wayfair/productAddition";
+import { buildWayfairSubmitRequest } from "../core/wayfair/submitBuilder";
+import { reduceWayfairFlaws } from "../core/wayfair/flawReducer";
+import { dataRoot, runsRoot } from "../core/paths";
 import {
   HasDataError,
   scrapeAmazonProduct
 } from "../connectors/hasdata";
 import { downloadProductImages } from "../core/images/downloadPool";
 
-const steps: Step[] = ["SCRAPE_AMAZON"];
+const steps: Step[] = [
+  "SCRAPE_AMAZON",
+  "WAYFAIR_CLASSIFY",
+  "WAYFAIR_DISCOVERY",
+  "WAYFAIR_SUBMIT",
+  "WAYFAIR_POLL"
+];
+const wayfairClassifySchemaVersion = "v1";
+const wayfairDiscoverySchemaVersion = "v1";
+const wayfairSubmitSchemaVersion = "v1";
+const wayfairPollSchemaVersion = "v1";
 
 function emit(event: RunEvent) {
   eventBus.emit(event);
@@ -164,6 +194,22 @@ async function runInitializationGate(run: Run) {
 async function runStep(run: Run, step: Step) {
   if (step === "SCRAPE_AMAZON") {
     await runScrapeAmazon(run);
+    return;
+  }
+  if (step === "WAYFAIR_CLASSIFY") {
+    await runWayfairClassify(run);
+    return;
+  }
+  if (step === "WAYFAIR_DISCOVERY") {
+    await runWayfairDiscovery(run);
+    return;
+  }
+  if (step === "WAYFAIR_SUBMIT") {
+    await runWayfairSubmit(run);
+    return;
+  }
+  if (step === "WAYFAIR_POLL") {
+    await runWayfairPoll(run);
     return;
   }
 }
@@ -386,6 +432,684 @@ async function runScrapeAmazon(run: Run) {
       handleJobError(run.id, variantJob.id, "SCRAPE_AMAZON", error);
       return;
     }
+  }
+}
+
+function readTaxonomyRef(runId: string) {
+  const refPath = path.join(runsRoot, runId, "artifacts", "wayfair", "taxonomyRef.json");
+  if (!fs.existsSync(refPath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(refPath, "utf-8")) as {
+    env: string;
+    poolId: string;
+    marketContextHash: string;
+    version: string;
+  };
+}
+
+function readJsonArtifact<T>(runId: string, relativePath: string) {
+  const fullPath = path.join(runsRoot, runId, "artifacts", relativePath);
+  if (!fs.existsSync(fullPath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(fullPath, "utf-8")) as T;
+}
+
+function readClassificationArtifact(runId: string) {
+  return readJsonArtifact<{
+    decision?: { classId?: string };
+  }>(runId, "wayfair/classification.json");
+}
+
+function readQuestionsArtifact(runId: string) {
+  return readJsonArtifact<WayfairProductAdditionQuestion[]>(runId, "wayfair/questions.json");
+}
+
+function readBrandAssociationsArtifact(runId: string) {
+  return readJsonArtifact<WayfairSupplierBrandAssociation[]>(
+    runId,
+    "wayfair/brandAssociations.json"
+  );
+}
+
+function readMediaTagsArtifact(runId: string) {
+  return readJsonArtifact<WayfairMediaMetaDataTagSet[]>(
+    runId,
+    "wayfair/mediaMetaDataTags.json"
+  );
+}
+
+function readSubmitRequestIds(runId: string) {
+  return readJsonArtifact<string[]>(runId, "wayfair/submit/requestIds.json");
+}
+
+function readSubmitRequest(runId: string) {
+  return readJsonArtifact<unknown>(runId, "wayfair/submit/request.json");
+}
+
+async function runWayfairClassify(run: Run) {
+  updateRun(run.id, { currentStep: "WAYFAIR_CLASSIFY" });
+  const asin = extractAsin(run.amazonUrl);
+  if (!asin) {
+    markNeedsReview(run.id, "无法从链接中解析 ASIN，无法进行类目判定。");
+    return;
+  }
+  const snapshot = readRunCache(run.id, asin)?.product;
+  if (!snapshot) {
+    markNeedsReview(run.id, "缺少产品快照，无法进行类目判定。");
+    return;
+  }
+  const taxonomyRef = readTaxonomyRef(run.id);
+  if (!taxonomyRef?.version) {
+    markNeedsReview(run.id, "缺少 taxonomy 引用，无法进行类目判定。");
+    return;
+  }
+  const inputHash = hashInput({
+    asin,
+    taxonomyVersion: taxonomyRef.version,
+    schemaVersion: wayfairClassifySchemaVersion
+  });
+  const jobResult = getOrCreateJob({
+    runId: run.id,
+    step: "WAYFAIR_CLASSIFY",
+    inputHash,
+    schemaVersion: wayfairClassifySchemaVersion
+  });
+  const job = jobResult.job;
+
+  emit({
+    id: nanoid(),
+    type: "JOB_STARTED",
+    runId: run.id,
+    jobId: job.id,
+    step: "WAYFAIR_CLASSIFY",
+    timestamp: new Date().toISOString()
+  });
+  if (!jobResult.reused) {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: 1 });
+  } else if (job.status !== "SUCCEEDED" && job.status !== "SKIPPED") {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: job.attempts + 1 });
+  }
+
+  const cachePath = path.join(runsRoot, run.id, "artifacts", "wayfair", "classification.json");
+  if (jobResult.reused && (job.status === "SUCCEEDED" || job.status === "SKIPPED") && fs.existsSync(cachePath)) {
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_CLASSIFY",
+      message: "类目判定已完成，跳过重复计算",
+      timestamp: new Date().toISOString()
+    });
+    return;
+  }
+
+  try {
+    const taxonomyVersionDir = path.join(
+      dataRoot,
+      "cache",
+      "wayfair",
+      "taxonomy",
+      taxonomyRef.env,
+      taxonomyRef.poolId,
+      taxonomyRef.marketContextHash,
+      "versions",
+      taxonomyRef.version
+    );
+    const result = await classifyWayfairClass({
+      snapshot,
+      taxonomyVersionDir
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/classification",
+      relativePath: "wayfair/classification.json",
+      content: {
+        asin: snapshot.asin,
+        taxonomyVersion: taxonomyRef.version,
+        keywords: result.keywords,
+        candidates: result.candidates,
+        decision: result.decision,
+        model: result.model
+      }
+    });
+    updateJob(run.id, job.id, { status: "SUCCEEDED" });
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_CLASSIFY",
+      message: "类目判定完成",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
+    markNeedsReview(
+      run.id,
+      error instanceof Error ? error.message : "类目判定失败，请检查设置与 taxonomy 缓存。"
+    );
+    emit({
+      id: nanoid(),
+      type: "JOB_FAILED",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_CLASSIFY",
+      message: error instanceof Error ? error.message : "Job failed",
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
+async function runWayfairDiscovery(run: Run) {
+  updateRun(run.id, { currentStep: "WAYFAIR_DISCOVERY" });
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    markNeedsReview(run.id, "缺少 Wayfair 凭据，无法执行 discovery。");
+    return;
+  }
+  const marketContext = parseMarketContext(run.marketContext);
+  if (!marketContext) {
+    markNeedsReview(run.id, "缺少 marketContext，无法执行 discovery。");
+    return;
+  }
+  const classification = readClassificationArtifact(run.id);
+  const classIdRaw = classification?.decision?.classId;
+  const classId = classIdRaw ? Number(classIdRaw) : Number.NaN;
+  if (!Number.isFinite(classId)) {
+    markNeedsReview(run.id, "缺少有效的 classId，无法执行 discovery。");
+    return;
+  }
+
+  const inputHash = hashInput({
+    classId,
+    marketContext,
+    schemaVersion: wayfairDiscoverySchemaVersion
+  });
+  const jobResult = getOrCreateJob({
+    runId: run.id,
+    step: "WAYFAIR_DISCOVERY",
+    inputHash,
+    schemaVersion: wayfairDiscoverySchemaVersion
+  });
+  const job = jobResult.job;
+  emit({
+    id: nanoid(),
+    type: "JOB_STARTED",
+    runId: run.id,
+    jobId: job.id,
+    step: "WAYFAIR_DISCOVERY",
+    timestamp: new Date().toISOString()
+  });
+  if (!jobResult.reused) {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: 1 });
+  } else if (job.status !== "SUCCEEDED" && job.status !== "SKIPPED") {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: job.attempts + 1 });
+  }
+
+  if (jobResult.reused && (job.status === "SUCCEEDED" || job.status === "SKIPPED")) {
+    const cachedQuestions = readQuestionsArtifact(run.id);
+    if (cachedQuestions) {
+      emit({
+        id: nanoid(),
+        type: "JOB_PROGRESS",
+        runId: run.id,
+        jobId: job.id,
+        step: "WAYFAIR_DISCOVERY",
+        message: "Wayfair discovery 已完成，跳过重复计算",
+        timestamp: new Date().toISOString()
+      });
+      return;
+    }
+  }
+
+  try {
+    const credentials = {
+      env: settings.env,
+      clientId: settings.clientId,
+      clientSecret: settings.clientSecret,
+      audience: settings.audience
+    };
+    const questions = await fetchWayfairQuestions({
+      credentials,
+      supplierId: settings.supplierId,
+      classId,
+      marketContext
+    });
+    const brandAssociations = await fetchWayfairBrandAssociations({
+      credentials,
+      supplierId: settings.supplierId,
+      marketContext
+    });
+    const mediaTags = await fetchWayfairMediaMetaDataTags({
+      credentials,
+      marketContext
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/questions",
+      relativePath: "wayfair/questions.json",
+      content: questions
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/brandAssociations",
+      relativePath: "wayfair/brandAssociations.json",
+      content: brandAssociations
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/mediaMetaDataTags",
+      relativePath: "wayfair/mediaMetaDataTags.json",
+      content: mediaTags
+    });
+    updateJob(run.id, job.id, { status: "SUCCEEDED" });
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_DISCOVERY",
+      message: "Wayfair discovery 完成",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
+    markNeedsReview(run.id, error instanceof Error ? error.message : "Wayfair discovery 失败");
+    emit({
+      id: nanoid(),
+      type: "JOB_FAILED",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_DISCOVERY",
+      message: error instanceof Error ? error.message : "Job failed",
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
+async function runWayfairSubmit(run: Run) {
+  updateRun(run.id, { currentStep: "WAYFAIR_SUBMIT" });
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    markNeedsReview(run.id, "缺少 Wayfair 凭据，无法提交。");
+    return;
+  }
+  const marketContext = parseMarketContext(run.marketContext);
+  if (!marketContext) {
+    markNeedsReview(run.id, "缺少 marketContext，无法提交。");
+    return;
+  }
+  const asin = extractAsin(run.amazonUrl);
+  const snapshot = asin ? readRunCache(run.id, asin)?.product : null;
+  if (!snapshot) {
+    markNeedsReview(run.id, "缺少产品快照，无法提交。");
+    return;
+  }
+  const classification = readClassificationArtifact(run.id);
+  const classIdRaw = classification?.decision?.classId;
+  const classId = classIdRaw ? Number(classIdRaw) : Number.NaN;
+  if (!Number.isFinite(classId)) {
+    markNeedsReview(run.id, "缺少有效的 classId，无法提交。");
+    return;
+  }
+  const questions = readQuestionsArtifact(run.id);
+  const brandAssociations = readBrandAssociationsArtifact(run.id);
+  const mediaTags = readMediaTagsArtifact(run.id);
+  if (!questions || !brandAssociations || !mediaTags) {
+    markNeedsReview(run.id, "Wayfair discovery 产物缺失，无法提交。");
+    return;
+  }
+
+  const inputHash = hashInput({
+    classId,
+    asin: snapshot.asin,
+    schemaVersion: wayfairSubmitSchemaVersion
+  });
+  const jobResult = getOrCreateJob({
+    runId: run.id,
+    step: "WAYFAIR_SUBMIT",
+    inputHash,
+    schemaVersion: wayfairSubmitSchemaVersion
+  });
+  const job = jobResult.job;
+  emit({
+    id: nanoid(),
+    type: "JOB_STARTED",
+    runId: run.id,
+    jobId: job.id,
+    step: "WAYFAIR_SUBMIT",
+    timestamp: new Date().toISOString()
+  });
+  if (!jobResult.reused) {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: 1 });
+  } else if (job.status !== "SUCCEEDED" && job.status !== "SKIPPED") {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: job.attempts + 1 });
+  }
+
+  const cachedRequestIds = readSubmitRequestIds(run.id);
+  if (jobResult.reused && (job.status === "SUCCEEDED" || job.status === "SKIPPED") && cachedRequestIds) {
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "Wayfair submit 已完成，跳过重复提交",
+      timestamp: new Date().toISOString()
+    });
+    return;
+  }
+
+  try {
+    const { request, answerResult, selected } = await buildWayfairSubmitRequest({
+      snapshot,
+      classId,
+      marketContext,
+      supplierId: settings.supplierId,
+      questions,
+      brandAssociations,
+      mediaMetaDataTags: mediaTags
+    });
+    const partCount = request.proposedProductAdditions.reduce(
+      (count, addition) => count + addition.parts.length,
+      0
+    );
+    const answersCount = request.proposedProductAdditions.reduce(
+      (count, addition) =>
+        count +
+        addition.parts.reduce((inner, part) => inner + (part.answers?.length ?? 0), 0),
+      0
+    );
+    log({
+      level: "info",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "Wayfair submit payload ready",
+      err: {
+        supplierId: request.supplierId,
+        classId,
+        partCount,
+        answersCount,
+        manufacturerId: selected.manufacturerId,
+        supplierPartNumber: selected.supplierPartNumber,
+        imageUrl: selected.imageUrl
+      }
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/request",
+      relativePath: "wayfair/submit/request.json",
+      content: request
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/answers",
+      relativePath: "wayfair/submit/answers.json",
+      content: answerResult
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/selection",
+      relativePath: "wayfair/submit/selection.json",
+      content: selected
+    });
+
+    const submitResponse = await submitWayfairProductAdditions({
+      credentials: {
+        env: settings.env,
+        clientId: settings.clientId,
+        clientSecret: settings.clientSecret,
+        audience: settings.audience
+      },
+      request
+    });
+    log({
+      level: "info",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "Wayfair submit response",
+      err: {
+        requestIds: submitResponse.requestIds
+      }
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/requestIds",
+      relativePath: "wayfair/submit/requestIds.json",
+      content: submitResponse.requestIds
+    });
+    updateJob(run.id, job.id, { status: "SUCCEEDED" });
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "Wayfair submit 已提交",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
+    markNeedsReview(run.id, error instanceof Error ? error.message : "Wayfair submit 失败");
+    emit({
+      id: nanoid(),
+      type: "JOB_FAILED",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: error instanceof Error ? error.message : "Job failed",
+      timestamp: new Date().toISOString()
+    });
+  }
+}
+
+async function runWayfairPoll(run: Run) {
+  updateRun(run.id, { currentStep: "WAYFAIR_POLL" });
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    markNeedsReview(run.id, "缺少 Wayfair 凭据，无法轮询提交状态。");
+    return;
+  }
+  let requestIds = readSubmitRequestIds(run.id);
+  if (!requestIds || requestIds.length === 0) {
+    markNeedsReview(run.id, "缺少 requestIds，无法轮询提交状态。");
+    return;
+  }
+
+  const inputHash = hashInput({
+    requestIds,
+    schemaVersion: wayfairPollSchemaVersion
+  });
+  const jobResult = getOrCreateJob({
+    runId: run.id,
+    step: "WAYFAIR_POLL",
+    inputHash,
+    schemaVersion: wayfairPollSchemaVersion
+  });
+  const job = jobResult.job;
+  emit({
+    id: nanoid(),
+    type: "JOB_STARTED",
+    runId: run.id,
+    jobId: job.id,
+    step: "WAYFAIR_POLL",
+    timestamp: new Date().toISOString()
+  });
+  if (!jobResult.reused) {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: 1 });
+  } else if (job.status !== "SUCCEEDED" && job.status !== "SKIPPED") {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: job.attempts + 1 });
+  }
+
+  try {
+    const maxAttempts = 6;
+    const intervalMs = 5000;
+    let submissions = [];
+    let repaired = false;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      submissions = await fetchWayfairSubmissions({
+        credentials: {
+          env: settings.env,
+          clientId: settings.clientId,
+          clientSecret: settings.clientSecret,
+          audience: settings.audience
+        },
+        supplierId: settings.supplierId,
+        requestIds
+      });
+      const statusSummary = submissions.map((item) => ({
+        requestId: item.requestId,
+        status: item.status,
+        validationStatus: item.validationStatus,
+        submissionStatus: item.submissionStatus,
+        flawCount: item.validationFlaws?.length ?? 0
+      }));
+      log({
+        level: "info",
+        runId: run.id,
+        jobId: job.id,
+        step: "WAYFAIR_POLL",
+        message: `Wayfair submissions poll #${attempt}`,
+        err: statusSummary
+      });
+      createArtifact({
+        runId: run.id,
+        jobId: job.id,
+        type: "wayfair/submissions",
+        relativePath: `wayfair/submissions/attempt-${attempt}.json`,
+        content: submissions
+      });
+      const hasFailed = submissions.some(
+        (item) =>
+          item.validationStatus === "FAILED" ||
+          item.submissionStatus === "FAILED" ||
+          (item.validationFlaws ?? []).length > 0
+      );
+      const allSubmitted = submissions.length > 0 && submissions.every((item) => item.status === "SUBMITTED");
+      if (hasFailed) {
+        if (!repaired) {
+          const request = readSubmitRequest(run.id);
+          const questions = readQuestionsArtifact(run.id);
+          if (request && questions) {
+            const reduced = reduceWayfairFlaws({
+              request: request as never,
+              questions,
+              submissions
+            });
+            if (reduced.changed) {
+              const repairId = Date.now();
+              log({
+                level: "info",
+                runId: run.id,
+                jobId: job.id,
+                step: "WAYFAIR_POLL",
+                message: "Wayfair validationFlaws auto-fix applied",
+                err: reduced.summary
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/repairSummary",
+                relativePath: `wayfair/submit/repairs/summary-${repairId}.json`,
+                content: reduced.summary
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/request",
+                relativePath: "wayfair/submit/request.json",
+                content: reduced.request
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/repairRequest",
+                relativePath: `wayfair/submit/repairs/request-${repairId}.json`,
+                content: reduced.request
+              });
+              const submitResponse = await submitWayfairProductAdditions({
+                credentials: {
+                  env: settings.env,
+                  clientId: settings.clientId,
+                  clientSecret: settings.clientSecret,
+                  audience: settings.audience
+                },
+                request: reduced.request
+              });
+              requestIds = submitResponse.requestIds;
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/requestIds",
+                relativePath: "wayfair/submit/requestIds.json",
+                content: submitResponse.requestIds
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/repairRequestIds",
+                relativePath: `wayfair/submit/repairs/requestIds-${repairId}.json`,
+                content: submitResponse.requestIds
+              });
+              repaired = true;
+              attempt = 0;
+              continue;
+            }
+          }
+        }
+        break;
+      }
+      if (allSubmitted) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+    }
+
+    const hasFlaws = submissions.some((item) => (item.validationFlaws ?? []).length > 0);
+    const failed = submissions.some(
+      (item) => item.validationStatus === "FAILED" || item.submissionStatus === "FAILED"
+    );
+    if (hasFlaws || failed) {
+      updateJob(run.id, job.id, { status: "FAILED", errorSummary: "Wayfair submissions 含 validationFlaws" });
+      markNeedsReview(run.id, "Wayfair submissions 返回 validationFlaws，需要人工修正。");
+      return;
+    }
+
+    updateJob(run.id, job.id, { status: "SUCCEEDED" });
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_POLL",
+      message: "Wayfair submissions 状态已更新",
+      timestamp: new Date().toISOString()
+    });
+  } catch (error) {
+    updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
+    markNeedsReview(run.id, error instanceof Error ? error.message : "Wayfair poll 失败");
+    emit({
+      id: nanoid(),
+      type: "JOB_FAILED",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_POLL",
+      message: error instanceof Error ? error.message : "Job failed",
+      timestamp: new Date().toISOString()
+    });
   }
 }
 

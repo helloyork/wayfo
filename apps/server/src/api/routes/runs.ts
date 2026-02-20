@@ -3,7 +3,7 @@ import fs from "fs";
 import path from "path";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { RunEvent } from "@wayfo/shared";
+import { RunEvent, WayfairAnswer, WayfairProductAdditionQuestion } from "@wayfo/shared";
 import { sendError } from "../errors";
 import { eventBus } from "../../core/events/eventBus";
 import { log } from "../../core/logger";
@@ -22,7 +22,8 @@ import {
   updateRun
 } from "../../core/store/runStore";
 import { getAppSettings } from "../../core/store/settingsStore";
-import { startRun } from "../../orchestrator/orchestrator";
+import { startRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
+import { normalizeAnswersForPart } from "../../core/wayfair/answerRules";
 
 export const runsRouter = Router();
 
@@ -35,6 +36,106 @@ const createRunSchema = z.object({
 const actionSchema = z.object({
   action: z.enum(["pause", "resume", "cancel"])
 });
+
+const reviewSchema = z.object({
+  request: z.record(z.unknown())
+});
+
+function readJson<T>(filePath: string): T | null {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+}
+
+function readQuestionsArtifact(runId: string) {
+  const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "questions.json");
+  return readJson<WayfairProductAdditionQuestion[]>(fullPath);
+}
+
+function readSubmitRequest(runId: string) {
+  const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "request.json");
+  return readJson<unknown>(fullPath);
+}
+
+function readLatestJsonInDir<T>(dirPath: string, prefix: string) {
+  if (!fs.existsSync(dirPath)) {
+    return null;
+  }
+  const files = fs
+    .readdirSync(dirPath)
+    .filter((file) => file.startsWith(prefix) && file.endsWith(".json"));
+  if (files.length === 0) {
+    return null;
+  }
+  const latest = files
+    .map((file) => ({
+      file,
+      mtime: fs.statSync(path.join(dirPath, file)).mtimeMs
+    }))
+    .sort((a, b) => a.mtime - b.mtime)
+    .pop();
+  if (!latest) {
+    return null;
+  }
+  return readJson<T>(path.join(dirPath, latest.file));
+}
+
+function readLatestSubmissions(runId: string) {
+  const dirPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submissions");
+  return readLatestJsonInDir(dirPath, "attempt-");
+}
+
+function readLatestRepairSuggestions(runId: string) {
+  const dirPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "repairs");
+  return readLatestJsonInDir(dirPath, "suggestions-");
+}
+
+function normalizeReviewRequest(
+  request: Record<string, unknown>,
+  questions: WayfairProductAdditionQuestion[]
+) {
+  const questionMap = new Map(questions.map((question) => [question.id, question]));
+  const touched = new Set<string>();
+  let removedAnswers = 0;
+  let normalizedAnswers = 0;
+  let fixedRanks = 0;
+  const proposed = Array.isArray(
+    (request as { proposedProductAdditions?: unknown }).proposedProductAdditions
+  )
+    ? ((request as { proposedProductAdditions?: unknown }).proposedProductAdditions as Array<
+        Record<string, unknown>
+      >)
+    : [];
+  const next = {
+    ...request,
+    proposedProductAdditions: proposed.map((addition) => {
+      const parts = Array.isArray((addition as { parts?: unknown }).parts)
+        ? ((addition as { parts?: unknown }).parts as Array<Record<string, unknown>>)
+        : [];
+      return {
+        ...addition,
+        parts: parts.map((part) => {
+          const answers = Array.isArray((part as { answers?: unknown }).answers)
+            ? ((part as { answers?: unknown }).answers as WayfairAnswer[])
+            : [];
+          const normalized = normalizeAnswersForPart(answers, questionMap, touched);
+          removedAnswers += normalized.removedAnswers;
+          normalizedAnswers += normalized.normalizedAnswers;
+          fixedRanks += normalized.fixedRanks;
+          return {
+            ...part,
+            answers: normalized.answers
+          };
+        })
+      };
+    })
+  };
+  return {
+    request: next,
+    summary: { removedAnswers, normalizedAnswers, fixedRanks, touchedQuestions: Array.from(touched) }
+  };
+}
 
 runsRouter.post("/", async (req, res) => {
   const parsed = createRunSchema.safeParse(req.body);
@@ -284,4 +385,88 @@ runsRouter.get("/:runId/events", (req, res) => {
     clearInterval(keepAlive);
     unsubscribe();
   });
+});
+
+runsRouter.get("/:runId/wayfair/submissions", (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const submissions = readLatestSubmissions(run.id);
+  const suggestions = readLatestRepairSuggestions(run.id);
+  res.json({ submissions, suggestions });
+});
+
+runsRouter.get("/:runId/wayfair/request", (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const request = readSubmitRequest(run.id);
+  if (!request) {
+    return sendError(
+      res,
+      {
+        code: "REQUEST_NOT_FOUND",
+        message: "Wayfair submit request not found"
+      },
+      404
+    );
+  }
+  res.json({ request });
+});
+
+runsRouter.post("/:runId/wayfair/review", async (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const parsed = reviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "request is required"
+    });
+  }
+  const questions = readQuestionsArtifact(run.id);
+  if (!questions) {
+    return sendError(res, {
+      code: "QUESTIONS_NOT_FOUND",
+      message: "Wayfair questions not found"
+    });
+  }
+  try {
+    const normalized = normalizeReviewRequest(parsed.data.request, questions);
+    await resumeWayfairAfterReview(run.id, normalized.request);
+    res.json({
+      ok: true,
+      summary: normalized.summary
+    });
+  } catch (error) {
+    sendError(res, {
+      code: "REVIEW_SUBMIT_FAILED",
+      message: error instanceof Error ? error.message : "Review submit failed"
+    });
+  }
 });
