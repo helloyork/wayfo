@@ -7,7 +7,8 @@ import {
   WayfairMediaMetaDataTagSet,
   WayfairProductAdditionQuestion,
   WayfairSubmitProductAdditionsRequest,
-  WayfairSupplierBrandAssociation
+  WayfairSupplierBrandAssociation,
+  WayfairProductAdditionSubmission
 } from "@wayfo/shared";
 import fs from "fs";
 import path from "path";
@@ -15,6 +16,7 @@ import { eventBus } from "../core/events/eventBus";
 import { log } from "../core/logger";
 import {
   createArtifact,
+  getRun,
   getOrCreateJob,
   hashInput,
   updateJob,
@@ -155,6 +157,107 @@ export async function startRun(run: Run) {
     timestamp: new Date().toISOString()
   });
   log({ level: "info", runId: run.id, message: "Run completed" });
+}
+
+export async function resumeWayfairAfterReview(
+  runId: string,
+  request: WayfairSubmitProductAdditionsRequest
+) {
+  const run = getRun(runId);
+  if (!run) {
+    throw new Error("Run not found");
+  }
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    markNeedsReview(run.id, "缺少 Wayfair 凭据，无法提交。");
+    return;
+  }
+  updateRun(run.id, { status: "RUNNING", currentStep: "WAYFAIR_SUBMIT" });
+  emit({
+    id: nanoid(),
+    type: "RUN_PROGRESS",
+    runId: run.id,
+    message: "人工修正已提交，继续执行 Wayfair 提交",
+    timestamp: new Date().toISOString()
+  });
+
+  const inputHash = hashInput({
+    request,
+    schemaVersion: wayfairSubmitSchemaVersion,
+    mode: "review"
+  });
+  const jobResult = getOrCreateJob({
+    runId: run.id,
+    step: "WAYFAIR_SUBMIT",
+    inputHash,
+    schemaVersion: wayfairSubmitSchemaVersion
+  });
+  const job = jobResult.job;
+  emit({
+    id: nanoid(),
+    type: "JOB_STARTED",
+    runId: run.id,
+    jobId: job.id,
+    step: "WAYFAIR_SUBMIT",
+    timestamp: new Date().toISOString()
+  });
+  if (!jobResult.reused) {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: 1 });
+  } else if (job.status !== "SUCCEEDED" && job.status !== "SKIPPED") {
+    updateJob(run.id, job.id, { status: "RUNNING", attempts: job.attempts + 1 });
+  }
+
+  try {
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/request",
+      relativePath: "wayfair/submit/request.json",
+      content: request
+    });
+    const submitResponse = await submitWayfairProductAdditions({
+      credentials: {
+        env: settings.env,
+        clientId: settings.clientId,
+        clientSecret: settings.clientSecret,
+        audience: settings.audience
+      },
+      request
+    });
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/requestIds",
+      relativePath: "wayfair/submit/requestIds.json",
+      content: submitResponse.requestIds
+    });
+    updateJob(run.id, job.id, { status: "SUCCEEDED" });
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "Wayfair submit 已提交（人工修正）",
+      timestamp: new Date().toISOString()
+    });
+    await runWayfairPoll(run);
+  } catch (error) {
+    updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
+    markNeedsReview(
+      run.id,
+      error instanceof Error ? error.message : "Wayfair submit 失败"
+    );
+    emit({
+      id: nanoid(),
+      type: "JOB_FAILED",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: error instanceof Error ? error.message : "Job failed",
+      timestamp: new Date().toISOString()
+    });
+  }
 }
 
 async function runInitializationGate(run: Run) {
@@ -1484,7 +1587,7 @@ async function runWayfairPoll(run: Run) {
   try {
     const maxAttempts = 6;
     const intervalMs = 5000;
-    let submissions = [];
+    let submissions: WayfairProductAdditionSubmission[] = [];
     let repaired = false;
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
       submissions = await fetchWayfairSubmissions({

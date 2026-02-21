@@ -1,16 +1,13 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
+import type { WayfairBrandInput, WayfairCountryInput, WayfairMarketContextInput } from "@wayfo/shared";
 import { dataRoot, ensureDir } from "../paths";
 import { log } from "../logger";
 import { getTaxonomyCacheMaxAgeDays, getTaxonomyPageSize } from "../config";
 import { wayfairGraphqlRequest, type WayfairEnv } from "../../connectors/wayfair";
 
-export type MarketContext = {
-  locale: string;
-  country: string;
-  brand: string;
-};
+export type MarketContext = WayfairMarketContextInput;
 
 export type TaxonomyInitPhase =
   | "FETCHING_TAXONOMY"
@@ -105,8 +102,8 @@ export function parseMarketContext(input?: string): MarketContext | null {
     if (isMarketContext(parsed)) {
       return {
         locale: String(parsed.locale),
-        country: String(parsed.country),
-        brand: String(parsed.brand)
+        country: String(parsed.country) as WayfairCountryInput,
+        brand: String(parsed.brand) as WayfairBrandInput
       };
     }
   } catch {
@@ -114,7 +111,11 @@ export function parseMarketContext(input?: string): MarketContext | null {
   }
   const parts = trimmed.split(/[|,]/).map((item) => item.trim()).filter(Boolean);
   if (parts.length === 3) {
-    return { locale: parts[0], country: parts[1], brand: parts[2] };
+    return {
+      locale: parts[0],
+      country: parts[1] as WayfairCountryInput,
+      brand: parts[2] as WayfairBrandInput
+    };
   }
   return null;
 }

@@ -107,7 +107,7 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
     let parsed: unknown;
     try {
       parsed = JSON.parse(requestText);
-    } catch (err) {
+    } catch {
       setError("提交失败：JSON 无法解析");
       return;
     }

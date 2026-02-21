@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { z } from "zod";
+import type { WayfairBrandInput, WayfairCountryInput } from "@wayfo/shared";
 import { sendError } from "../errors";
 import { getWayfairActiveSettings } from "../../core/store/settingsStore";
 import { getWayfairPoolId } from "../../core/config";
@@ -49,7 +50,11 @@ function normalizeMarketContext(input: unknown) {
   if (input && typeof input === "object") {
     const obj = input as { locale?: string; country?: string; brand?: string };
     if (obj.locale && obj.country && obj.brand) {
-      return { locale: obj.locale, country: obj.country, brand: obj.brand };
+      return {
+        locale: obj.locale,
+        country: obj.country as WayfairCountryInput,
+        brand: obj.brand as WayfairBrandInput
+      };
     }
   }
   return null;

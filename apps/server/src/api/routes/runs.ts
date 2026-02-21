@@ -3,7 +3,12 @@ import fs from "fs";
 import path from "path";
 import { nanoid } from "nanoid";
 import { z } from "zod";
-import { RunEvent, WayfairAnswer, WayfairProductAdditionQuestion } from "@wayfo/shared";
+import {
+  RunEvent,
+  WayfairAnswer,
+  WayfairProductAdditionQuestion,
+  WayfairSubmitProductAdditionsRequest
+} from "@wayfo/shared";
 import { sendError } from "../errors";
 import { eventBus } from "../../core/events/eventBus";
 import { log } from "../../core/logger";
@@ -14,6 +19,7 @@ import {
   readRunImageIndex
 } from "../../core/amazon/cache";
 import {
+  createArtifact,
   createRun,
   getRun,
   listArtifacts,
@@ -39,7 +45,7 @@ const actionSchema = z.object({
 });
 
 const reviewSchema = z.object({
-  request: z.record(z.unknown())
+  request: z.record(z.string(), z.unknown())
 });
 
 function readJson<T>(filePath: string): T | null {
@@ -586,7 +592,10 @@ runsRouter.post("/:runId/wayfair/review", async (req, res) => {
   }
   try {
     const normalized = normalizeReviewRequest(parsed.data.request, questions);
-    await resumeWayfairAfterReview(run.id, normalized.request);
+    await resumeWayfairAfterReview(
+      run.id,
+      normalized.request as WayfairSubmitProductAdditionsRequest
+    );
     res.json({
       ok: true,
       summary: normalized.summary

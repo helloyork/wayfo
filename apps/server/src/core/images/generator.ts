@@ -67,14 +67,6 @@ function getImageCachePath(type: ImageType, fileName: string) {
   return path.join(cacheDir, fileName);
 }
 
-function getOutputExtension(sourcePath: string): string {
-  const ext = path.extname(sourcePath).toLowerCase();
-  if ([".png", ".jpg", ".jpeg", ".webp"].includes(ext)) {
-    return ext === ".jpeg" ? ".jpg" : ext;
-  }
-  return ".png";
-}
-
 async function loadPngSquareBuffer(sourcePath: string): Promise<Buffer> {
   const image = sharp(sourcePath);
   const targetSize = 1024;

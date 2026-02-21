@@ -274,11 +274,11 @@ function deriveValueFromSnapshot(
       hints: ["shape"]
     },
     {
-      match: (id, _name) => id.includes("core::universalproductcode"),
+      match: (id) => id.includes("core::universalproductcode"),
       hints: ["upc", "universal product code"]
     },
     {
-      match: (id, _name) => id.includes("core::manufacturerpartnumber"),
+      match: (id) => id.includes("core::manufacturerpartnumber"),
       hints: ["manufacturer part number", "mpn"]
     },
     {

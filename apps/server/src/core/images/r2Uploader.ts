@@ -4,7 +4,6 @@ import { createHash } from "crypto";
 import {
   S3Client,
   PutObjectCommand,
-  HeadObjectCommand,
   PutBucketLifecycleConfigurationCommand
 } from "@aws-sdk/client-s3";
 import { getR2Settings } from "../store/settingsStore";

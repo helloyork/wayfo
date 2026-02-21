@@ -91,8 +91,8 @@ export async function classifyImages(input: {
 
   for (const batch of batches) {
     const result = await pool.run([batch], async (batchImages) => {
-      const imageContents: OpenAI.Chat.Completions.ChatCompletionContentPart[] = batchImages.map(
-        (img, idx) => ({
+    const imageContents: OpenAI.Chat.Completions.ChatCompletionContentPart[] = batchImages.map(
+      (img) => ({
           type: "image_url" as const,
           image_url: {
             url: `data:${getMimeType(img.localPath)};base64,${encodeImageToBase64(img.localPath)}`,
