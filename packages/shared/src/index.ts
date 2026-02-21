@@ -27,9 +27,9 @@ export const StepSchema = z.enum([
   "SCRAPE_AMAZON",
   "DIMENSION_ENRICH",
   "WAYFAIR_CLASSIFY",
-  "IMAGE_CLASSIFY",
   "IMAGE_PLAN",
   "IMAGE_GENERATE",
+  "IMAGE_UPLOAD",
   "WAYFAIR_DISCOVERY",
   "WAYFAIR_SUBMIT",
   "WAYFAIR_POLL"
@@ -67,6 +67,7 @@ export const RunSchema = z.object({
   id: z.string(),
   amazonUrl: z.string(),
   marketContext: z.string().optional(),
+  manufacturerId: z.string().optional(),
   enumerateVariants: z.boolean().optional(),
   status: RunStatusSchema,
   currentStep: StepSchema.optional(),

@@ -16,13 +16,12 @@ type ProductSummary = {
   };
   imageName?: string;
   imageUrl?: string;
+  runId: string;
 };
 
 export function ProductGrid({
-  runId,
   products
 }: {
-  runId: string;
   products: ProductSummary[];
 }) {
   if (products.length === 0) {
@@ -32,7 +31,7 @@ export function ProductGrid({
   return (
     <div className="product-grid">
       {products.map((product) => (
-        <ProductCard key={product.asin} runId={runId} product={product} />
+        <ProductCard key={product.asin} product={product} />
       ))}
     </div>
   );

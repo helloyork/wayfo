@@ -5,11 +5,13 @@ import { apiBase } from "../../lib/api";
 
 type AppSettingsResponse = {
   enumerateVariantsDefault: boolean;
+  primaryImageCandidateCount: number;
   updatedAt: string | null;
 };
 
 export function RunDefaultsSettings() {
   const [enumerateVariantsDefault, setEnumerateVariantsDefault] = useState(false);
+  const [primaryImageCandidateCount, setPrimaryImageCandidateCount] = useState(4);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"success" | "warning" | "danger">(
@@ -26,6 +28,7 @@ export function RunDefaultsSettings() {
     }
     const payload = (await res.json()) as AppSettingsResponse;
     setEnumerateVariantsDefault(payload.enumerateVariantsDefault);
+    setPrimaryImageCandidateCount(payload.primaryImageCandidateCount ?? 4);
     setUpdatedAt(payload.updatedAt);
   };
 
@@ -39,7 +42,7 @@ export function RunDefaultsSettings() {
       const res = await fetch(`${apiBase}/api/settings/app`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enumerateVariantsDefault })
+        body: JSON.stringify({ enumerateVariantsDefault, primaryImageCandidateCount })
       });
       if (!res.ok) {
         throw new Error("保存失败");
@@ -71,6 +74,18 @@ export function RunDefaultsSettings() {
             开启后将自动遍历变体并入列采集；默认关闭，仅处理输入 ASIN。
           </span>
         </div>
+      </label>
+      <label className="stack">
+        <span>主图重绘候选数</span>
+        <span className="muted">控制主图重绘候选数量（1-8）。</span>
+        <input
+          className="input"
+          type="number"
+          min={1}
+          max={8}
+          value={primaryImageCandidateCount}
+          onChange={(event) => setPrimaryImageCandidateCount(Number(event.target.value) || 1)}
+        />
       </label>
       <div className="row">
         <button className="btn" type="button" onClick={onSave} disabled={loading}>

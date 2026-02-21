@@ -109,7 +109,7 @@ Wayfo是一个本地运行的 Node.js 应用，带有一个简单的命令行参
 
 ### Batch：可并行的任务分组
 - 图片生成通常以“批次”并行：例如主图/规格图在一个批次内生成 4 张候选，受限于 image API 并发与成本。
-- 变体（variants）可按批次并行（仅当启用变体枚举时）：每个变体的字段填充/图片组合/Wayfair answers 生成与提交作为批次任务。
+- 变体（variants）支持“**批次化处理**”（仅当启用处理所有变体时）：**一个变体组作为一个批次（VariantBatch）**进入下游（图片生成、审查 UI、提交），以降低重复生成与人审成本，并保证“共享图片规则”一致执行（见下文“变体批次处理规则”）。
 
 ### 取消、暂停与恢复
 - Run 级别支持取消/暂停；Orchestrator 需要把取消信号传播到 worker，并在安全点落盘。
@@ -187,13 +187,31 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 
 ### 变体（Variants）任务模型（可配置，默认关闭）
 
-系统默认只处理“一个 Amazon 链接/ASIN”，不会自动穷举变体。变体枚举可配置开启，开启后才会把“一个 Amazon 链接”扩展为“一组产品任务（父 ASIN + 全部变体 ASIN）”，并将**每个变体视为独立新任务加入队列**：
+系统默认只处理“一个 Amazon 链接/ASIN”，不会自动穷举变体。
 
-- `SCRAPE_AMAZON_SEED`：对用户输入链接/ASIN 抓取一次，得到父 `asin` 与可选的 `variants[].asin` 列表
-- `SCRAPE_AMAZON_ASIN`（队列任务）：仅在启用变体枚举时，对每个 `asin`（父 + 变体去重后）分别入队执行采集与落盘
-  - 幂等 key 必须包含：`domain + asin + schemaVersion`（从而严格按产品 ID 缓存）
+当开启“处理所有变体（process all variants）”时，不再把每个变体当作独立的端到端任务，而是把“主变体 + 全部变体”作为**一个批次（VariantBatch）**进入下游处理与审查：
+
+- `SCRAPE_AMAZON_SEED`：对用户输入链接/ASIN 抓取一次，得到主 `asin` 与可选的 `variants[].asin` 列表
+- `SCRAPE_AMAZON_ASIN`（采集仍可并行）：对 VariantBatch 内每个 `asin`（主 + 变体去重后）分别执行采集与落盘
+  - 幂等 key 必须包含：`domain + asin + schemaVersion`（严格按产品 ID 缓存）
   - 任务执行前必须先走“缓存规则”，命中缓存则直接完成
-- 下游步骤（Dimension/Classification/图片流水线/Wayfair）默认只对输入 `asin` 执行；当启用变体枚举时，才以 `asin` 为粒度执行，使每个变体都能独立产出、独立审查、独立重试与断点续跑。
+- `VARIANT_BATCH_INDEX`（批次索引产物）：把本次批次的关键关系固化为 artifact（示例字段：`mainAsin`、`asins[]`、`variantKeys[]`、`createdAt`、`schemaVersion`），供后续图片/审查/提交统一引用
+
+#### 变体批次处理规则（必须）
+
+当 VariantBatch 启用时，下游的“图片生成、审查 UI、提交”必须遵循以下规则：
+
+- **图片共享规则**：在同一批次内，除了主图 `primaryImage` 以外，其余图片均视为**批次共享**资产，且共享图片来源为**主变体重新生成的非主图图片**（所有变体共用同一组图片 URL）。
+- **批量生图规则**：
+  - **主变体（用户输入的那个产品）**：对**所有图片**执行重新生成（primary + 其它类型图片都生成/重绘），并产出“批次共享图片（非 primary）”集合。
+  - **其余变体**：只生成/重绘 **该变体自己的主图（primaryImage）**；其它图片直接复用“主变体重新生成的批次共享图片（非 primary）”。
+- **主图候选数量（Web 可编辑）**：所有产品在生成主图时，都必须由一个 Web UI 可修改字段控制候选数（例如 `primaryImageCandidateCount`）：
+  - 配置为 **1**：不做“多候选抽图/选择”，直接生成 1 张主图
+  - 配置为 **N（如 4）**：每个产品主图生成 N 张候选，由用户选择最终主图
+  - 该字段应支持“全局默认 + Run 级覆盖”（便于临时提质/控成本）
+- **审查 UI 规则**：同一批次内的所有变体必须进入**同一个预览/审查界面**：
+  - 批次共享图片：只审一次，选择结果应用到全部变体
+  - 变体主图：每个变体单独选择最终主图
 
 ### 失败处理与人审介入（必须）
 
@@ -244,6 +262,18 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 
 图片生成的主要目标是：**对采集到的所有图片进行创意重绘（repaint）**，同时用“类型策略 + 批次策略”控制成本与并发。
 
+### 2.0 变体批次下的图片资产模型（新增，必须）
+
+当启用 VariantBatch 时，图片产物需要区分两类：
+
+- **每变体独立（per-variant）**：`primaryImage`
+- **批次共享（shared across variants）**：除 `primaryImage` 外的所有图片类型（dimension/selling_point/lifestyle/...），且共享图片必须来自**主变体的重新生成产物**
+
+最终用于 Wayfair 的图片组合规则建议为：
+
+- 每个变体（part）的 `media.images`：`[该变体重新生成并选定 primaryImage] + [主变体重新生成的批次共享图片（同序）]`
+- 需要去重并保持稳定排序（保证幂等与可复现）
+
 ### 2.1 图片类型识别（Classification）
 使用图片识别模型或多模态模型，对每张图片进行类型归类。默认支持的类型（后续可扩展）：
 - 产品主图（primary）
@@ -260,12 +290,20 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 - 是否以批次调用生成（batch）
 - 生成后的自动挑选策略（例如按置信度/综合评分选默认值，或全部交给人审）
 
+补充约束（用于满足 VariantBatch 新需求）：
+
+- **主图候选数必须可配置**：主图候选数由 Web UI 字段 `primaryImageCandidateCount` 决定（全局默认 + Run 覆盖）。
+- **批次模式下的生成范围**：
+  - `mainAsin`：按策略生成所有启用类型（primary + shared types）
+  - `asins[others]`：仅生成 primary（候选数同 `primaryImageCandidateCount`），shared types 全部复用 `mainAsin` 重新生成的产物引用
+
 ### 2.3 图片重绘（Generate）
 随后，使用图片生成 API，对计划中的图片按对应提示词进行重绘（需要输入原图）。
 
 成本受限时的默认策略：
 - **所有图片都重绘**，但大部分类型默认只生成 **1 张**候选图。
-- 只有**产品主图**与**规格图**默认启用“4 图 1 批次”的多候选生成，供审查阶段让用户选择。
+- 只有**产品主图**默认启用“多候选生成”，候选数量由 `primaryImageCandidateCount` 控制（Web 可编辑）。
+- **规格图/其它共享类型**是否多候选由策略配置决定；当启用 VariantBatch 时，默认只对 `mainAsin` 生成共享类型。
 
 默认选择逻辑建议：
 - 产品主图：从候选中自动选一个“默认主图”，但保留所有候选给人审切换。
@@ -286,6 +324,19 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
   - 特点：编辑模式丰富（inpaint/outpaint/background swap），对“主图换背景/规格图局部清理”很实用。
   - 工程建议：能力开通与配额可能需要前置申请，落地时优先做成可选 provider。
 
+无水印约束（必须考虑）：
+
+- 部分云厂商的图像模型支持“不可见水印”开关（例如 Vertex Imagen 的 `addWatermark` 默认开启）。若要求严格“无水印”，需要在 provider 配置层显式关闭，并评估由此带来的功能约束（例如某些平台在关闭水印时会限制 `seed` 等确定性参数）。
+- 避免使用默认强制水印的图像模型作为主路径（例如某些厂商自研模型可能默认加不可见水印）。
+
+### 2.3.2 主图提示词方向（多角度展示，初版约束）
+
+主图（primaryImage）候选的提示词应以“同一件产品、不同角度/镜头”作为主要变化维度，确保可控多样性而不改产品本体：
+
+- 角度维度：正面、45° 斜侧、侧面、背面、俯视（top-down）、近景细节（close-up）。
+- 一致性约束：保持产品材质/颜色/结构/纹理不变；保持真实比例；不添加文字、Logo、贴纸、额外配件；不生成水印/边框/拼贴。
+- 场景控制：默认白/浅灰棚拍背景，软光，真实阴影；如需 lifestyle 另走独立类型策略，不要混入 primary 候选。
+
 无论选哪家，建议都做成可插拔的 `ImageProvider`，并在配置里提供：
 - 每种图片类型的提示词模板（版本化）
 - `sampleCount/n`、尺寸、质量档位、是否使用 mask
@@ -301,8 +352,9 @@ Wayfo会默认维护本地目录缓存，并通过 **HasData** 拉取商品结�
 ```json
 {
   "imageGeneration": {
+    "primaryImageCandidateCount": 4,
     "types": {
-      "primary":        { "enabled": true, "candidates": 4, "batch": true },
+      "primary":        { "enabled": true, "candidates": "use_primaryImageCandidateCount", "batch": true },
       "dimension":      { "enabled": true, "candidates": 4, "batch": true },
       "selling_point":  { "enabled": true, "candidates": 1, "batch": false },
       "lifestyle":      { "enabled": true, "candidates": 1, "batch": false }
@@ -373,10 +425,14 @@ Wayfair 产品创建请求里需要可公开访问的图片 URL，因此图片�
 （可选）当 submission 成功后，可通过 Supplier Catalog Read API 拉取并核验 `supplierPartNumber` 的状态变化，用于“是否可读/是否 live”检查。
 
 ## 3.5 提交前审查（Human-in-the-loop，强制步骤）
-
+  
 包括图片生成完成在内，Web 界面需要把该 Run 标记为**待审查**，用户在提交前完成以下确认：
 
-- **图片选择**：以图生图对主图与规格图分别批量生成 4 张候选；用户最终为每类选择**单一结果**作为提交用图片 URL。
+- **图片选择（单品 / 变体批次统一规则）**：
+  - 主图：每个产品主图候选数由 `primaryImageCandidateCount` 控制；用户为每个产品选择最终主图。
+  - 当启用 VariantBatch 时：
+    - 批次共享图片：由主变体生成（可按策略产生候选），只审一次，选择结果应用到全部变体
+    - 其余变体：只需要审该变体的主图候选
 - **字段确认**：展示将要发送给 Wayfair 的核心字段（classId、manufacturerId、supplierPartNumber、media.images、以及将生成的 answers），允许用户修改/确认。
 - **确认发送**：只有用户确认后，才允许执行 `productAddition.submit`。
 

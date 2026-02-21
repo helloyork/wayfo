@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { fetchJson } from "../../../lib/api";
+import { RunJobsPanel } from "../../components/RunJobsPanel";
 import { RunEventStream } from "../../components/RunEventStream";
-import { ReviewQueue } from "../../components/ReviewQueue";
-import { StepOverview } from "../../components/StepOverview";
+import { RunProgressPanel } from "../../components/RunProgressPanel";
 import { WayfairReviewPanel } from "../../components/WayfairReviewPanel";
 
 export const dynamic = "force-dynamic";
@@ -37,16 +37,6 @@ export default async function RunDetailPage({
   params: { runId: string };
 }) {
   const detail = await fetchJson<RunDetail>(`/api/runs/${params.runId}`);
-  const jobStatusCounts = detail.jobs.reduce<Record<string, number>>((acc, job) => {
-    acc[job.status] = (acc[job.status] ?? 0) + 1;
-    return acc;
-  }, {});
-  const artifactTypeCounts = detail.artifacts.reduce<Record<string, number>>((acc, artifact) => {
-    acc[artifact.type] = (acc[artifact.type] ?? 0) + 1;
-    return acc;
-  }, {});
-  const currentStep = detail.run.currentStep;
-  const runStatus = detail.run.status;
   const stepItems = [
     {
       step: "SCRAPE_AMAZON",
@@ -73,107 +63,43 @@ export default async function RunDetailPage({
       title: "Wayfair Poll",
       detail: "轮询 submissions 状态与 validationFlaws。"
     }
-  ].map((item) => {
-    if (runStatus === "COMPLETED") {
-      return { title: item.title, detail: item.detail, status: "完成", badgeTone: "success" as const };
-    }
-    if (runStatus === "NEEDS_REVIEW" || runStatus === "WAITING_FOR_REVIEW") {
-      return {
-        title: item.title,
-        detail: item.detail,
-        status: item.step === currentStep ? "需要审查" : "待执行",
-        badgeTone: item.step === currentStep ? ("warning" as const) : undefined
-      };
-    }
-    if (item.step === currentStep) {
-      return { title: item.title, detail: item.detail, status: "进行中", badgeTone: "warning" as const };
-    }
-    return { title: item.title, detail: item.detail, status: "待执行" };
-  });
-
-  const reviewItems =
-    runStatus === "NEEDS_REVIEW" || runStatus === "WAITING_FOR_REVIEW"
-      ? [
-          {
-            title: "Wayfair ValidationFlaws",
-            description: "需要人工确认并修正后重新提交。",
-            owner: `Run ${detail.run.id}`
-          }
-        ]
-      : [];
+  ];
 
   return (
     <div className="stack">
       <div className="card stack">
-        <Link href="/">返回</Link>
+        <Link href="/runs">返回</Link>
         <div className="row">
-          <h2>Run {detail.run.id}</h2>
+          <h2>Run 基础信息</h2>
           <span className="badge">{detail.run.status}</span>
         </div>
-        <div className="muted">{detail.run.amazonUrl}</div>
+        <div className="muted">Run ID: {detail.run.id}</div>
+        <div className="muted">Amazon URL: {detail.run.amazonUrl}</div>
         <div className="muted">创建时间: {detail.run.createdAt}</div>
-        <div className="row muted" style={{ gap: 12 }}>
-          <span>当前步骤: {detail.run.currentStep ?? "N/A"}</span>
+        <div className="row muted">
           <span>Market Context: {detail.run.marketContext ?? "N/A"}</span>
           <span>变体枚举: {detail.run.enumerateVariants ? "开启" : "关闭"}</span>
         </div>
       </div>
 
-      <div className="card stack">
-        <strong>执行摘要</strong>
-        <div className="row muted" style={{ gap: 12 }}>
-          <span>Jobs: {detail.jobs.length}</span>
-          <span>Artifacts: {detail.artifacts.length}</span>
-        </div>
-        <div className="row muted" style={{ gap: 12 }}>
-          {Object.keys(jobStatusCounts).length === 0
-            ? "暂无 Job"
-            : Object.entries(jobStatusCounts).map(([status, count]) => (
-                <span key={status}>
-                  {status}: {count}
-                </span>
-              ))}
-        </div>
-        <div className="row muted" style={{ gap: 12, flexWrap: "wrap" }}>
-          {Object.keys(artifactTypeCounts).length === 0
-            ? "暂无产物"
-            : Object.entries(artifactTypeCounts).map(([type, count]) => (
-                <span key={type}>
-                  {type}: {count}
-                </span>
-              ))}
-        </div>
-      </div>
-
-      <StepOverview steps={stepItems} />
-
-      <ReviewQueue items={reviewItems} />
+      <RunProgressPanel
+        runId={detail.run.id}
+        steps={stepItems.map((item) => ({ step: item.step, title: item.title }))}
+        initialStatus={detail.run.status}
+        initialStep={detail.run.currentStep}
+      />
 
       <WayfairReviewPanel runId={detail.run.id} />
 
       <RunEventStream runId={detail.run.id} />
 
-      <div className="card stack">
-        <strong>Jobs</strong>
-        {detail.jobs.length === 0 ? (
-          <div className="empty">暂无 Job</div>
-        ) : (
-          <div className="list">
-            {detail.jobs.map((job) => (
-              <div key={job.id} className="list-item">
-                <div className="row">
-                  <span className="badge">{job.status}</span>
-                  <span>{job.step}</span>
-                </div>
-                <div className="muted">重试次数: {job.attempts}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
+      <RunJobsPanel runId={detail.run.id} initialJobs={detail.jobs} />
 
-      <div className="card stack">
-        <strong>Artifacts</strong>
+      <details className="card stack">
+        <summary className="row">
+          <strong>Artifacts（折叠）</strong>
+          <span className="muted">{detail.artifacts.length} 个</span>
+        </summary>
         {detail.artifacts.length === 0 ? (
           <div className="empty">暂无产物</div>
         ) : (
@@ -189,7 +115,7 @@ export default async function RunDetailPage({
             ))}
           </div>
         )}
-      </div>
+      </details>
     </div>
   );
 }

@@ -60,6 +60,11 @@ export function getDb() {
     );
   }
 
+  const hasManufacturerId = runColumns.some((column) => column.name === "manufacturerId");
+  if (!hasManufacturerId) {
+    db.exec("alter table runs add column manufacturerId text;");
+  }
+
   const jobColumns = db
     .prepare("pragma table_info(jobs)")
     .all() as Array<{ name: string }>;

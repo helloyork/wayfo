@@ -23,9 +23,21 @@ function buildProductSummary(snapshot: AmazonProductSnapshot) {
   const specs = Object.entries(snapshot.productInformation?.specs ?? {}).slice(0, 18);
   const features = Object.entries(snapshot.productInformation?.features ?? {}).slice(0, 12);
   const description = snapshot.description ? snapshot.description.slice(0, 1200) : "";
+  const price = snapshot.price?.current
+    ? `${snapshot.price.symbol ?? ""}${snapshot.price.current}${snapshot.price.currency ? ` ${snapshot.price.currency}` : ""}`
+    : null;
+  const priceFrom = snapshot.price?.priceFrom
+    ? `${snapshot.price.symbol ?? ""}${snapshot.price.priceFrom}${snapshot.price.currency ? ` ${snapshot.price.currency}` : ""}`
+    : null;
+  const availability = snapshot.availability?.isAvailable ? "available" : "unavailable";
   return [
     `Title: ${snapshot.title}`,
     snapshot.brand ? `Brand: ${snapshot.brand}` : null,
+    snapshot.dimensions?.value ? `Dimensions: ${snapshot.dimensions.value}` : null,
+    snapshot.weight?.value ? `Weight: ${snapshot.weight.value}` : null,
+    price ? `Price: ${price}` : null,
+    priceFrom ? `PriceFrom: ${priceFrom}` : null,
+    `Availability: ${availability}`,
     bullets.length ? `Bullets: ${bullets.join(" | ")}` : null,
     specs.length ? `Specs: ${specs.map(([k, v]) => `${k}: ${v}`).join(" | ")}` : null,
     features.length

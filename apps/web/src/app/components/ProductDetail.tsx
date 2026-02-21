@@ -1,3 +1,6 @@
+ "use client";
+
+import { useMemo, useState } from "react";
 import { apiBase } from "../../lib/api";
 
 type ProductSnapshot = {
@@ -34,6 +37,12 @@ type ImageIndex = {
   }>;
 };
 
+type GeneratedImage = {
+  type: string;
+  path: string;
+  fileName: string;
+};
+
 function formatPrice(price?: ProductSnapshot["price"]) {
   if (!price?.current) {
     return "暂无价格";
@@ -64,30 +73,47 @@ function buildImageSources(
 export function ProductDetail({
   runId,
   product,
-  images
+  images,
+  generatedImages
 }: {
   runId: string;
   product: ProductSnapshot;
   images?: ImageIndex;
+  generatedImages?: GeneratedImage[];
 }) {
-  const imageSources = buildImageSources(runId, product.asin, product, images);
-  const primaryImage = imageSources[0];
+  const imageSources = useMemo(
+    () => buildImageSources(runId, product.asin, product, images),
+    [images, product, runId]
+  );
+  const generatedSources = useMemo(
+    () =>
+      (generatedImages ?? []).map((img) => ({
+        ...img,
+        url: `${apiBase}${img.path}`
+      })),
+    [generatedImages]
+  );
+  const initialImage = imageSources[0] ?? generatedSources[0]?.url ?? "";
+  const [activeImage, setActiveImage] = useState(initialImage);
   const featureEntries = Object.entries(product.productInformation.features ?? {});
   const specEntries = Object.entries(product.productInformation.specs ?? {});
+  const hasGenerated = generatedSources.length > 0;
 
   return (
     <div className="stack">
       <div className="split">
         <div className="card product-gallery">
-          {primaryImage ? (
-            <img className="product-image" src={primaryImage} alt={product.title} />
+          {activeImage ? (
+            <img className="product-image" src={activeImage} alt={product.title} />
           ) : (
             <div className="empty">暂无图片</div>
           )}
           {imageSources.length > 1 ? (
             <div className="product-thumbs">
-              {imageSources.slice(1, 9).map((src) => (
-                <img key={src} className="product-thumb" src={src} alt={product.title} />
+              {imageSources.slice(0, 9).map((src) => (
+                <button key={src} className="thumb-button" type="button" onClick={() => setActiveImage(src)}>
+                  <img className="product-thumb" src={src} alt={product.title} />
+                </button>
               ))}
             </div>
           ) : null}
@@ -124,6 +150,26 @@ export function ProductDetail({
             )}
           </div>
         </div>
+      </div>
+
+      <div className="card stack">
+        <strong>AI 生成图片</strong>
+        {!hasGenerated ? (
+          <div className="empty">暂无生成图片</div>
+        ) : (
+          <div className="product-thumbs">
+            {generatedSources.map((img) => (
+              <button
+                key={`${img.type}-${img.fileName}`}
+                className="thumb-button"
+                type="button"
+                onClick={() => setActiveImage(img.url)}
+              >
+                <img className="product-thumb" src={img.url} alt={`${product.title}-${img.type}`} />
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="grid-2">

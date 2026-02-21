@@ -14,10 +14,20 @@ const coreQuestionIds = new Set([
   "core::productName",
   "core::amazonStandardIdentificationNumber",
   "featureDescription::genericFeatures",
-  "featureDescription::romanceCopy"
+  "featureDescription::romanceCopy",
+  "media::imageValue"
 ]);
 
-function pickManufacturerId(brands: WayfairSupplierBrandAssociation[]) {
+function pickManufacturerId(
+  brands: WayfairSupplierBrandAssociation[],
+  preferredId?: string | null
+) {
+  if (preferredId) {
+    const match = brands.find((item) => item.manufacturer?.id === preferredId);
+    if (match) {
+      return preferredId;
+    }
+  }
   const first = brands.find((item) => item.manufacturer?.id);
   return first?.manufacturer?.id ?? null;
 }
@@ -30,6 +40,30 @@ function selectPrimaryImage(snapshot: AmazonProductSnapshot) {
   return snapshot.images.primary ?? snapshot.images.all[0] ?? null;
 }
 
+function selectImageUrls(input: {
+  snapshot: AmazonProductSnapshot;
+  uploadedImageUrls?: string[] | null;
+}): string[] {
+  if (input.uploadedImageUrls && input.uploadedImageUrls.length > 0) {
+    return input.uploadedImageUrls;
+  }
+  const primary = selectPrimaryImage(input.snapshot);
+  return primary ? [primary] : [];
+}
+
+function sanitizeAnswers(
+  answers: Array<{ questionId: string; value: string; parentRank?: number; rank?: number }>
+) {
+  return answers
+    .filter((answer) => answer.questionId !== "media::imageValue")
+    .map((answer) => ({
+      questionId: answer.questionId,
+      value: answer.value,
+      parentRank: answer.parentRank,
+      rank: answer.rank
+    }));
+}
+
 export async function buildWayfairSubmitRequest(input: {
   snapshot: AmazonProductSnapshot;
   classId: number;
@@ -38,14 +72,19 @@ export async function buildWayfairSubmitRequest(input: {
   questions: WayfairProductAdditionQuestion[];
   brandAssociations: WayfairSupplierBrandAssociation[];
   mediaMetaDataTags: WayfairMediaMetaDataTagSet[];
+  manufacturerId?: string | null;
+  uploadedImageUrls?: string[] | null;
 }) {
-  const manufacturerId = pickManufacturerId(input.brandAssociations);
+  const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
     throw new Error("brandAssociations 为空，无法选择 manufacturerId");
   }
   const supplierPartNumber = buildSupplierPartNumber(input.snapshot);
-  const imageUrl = selectPrimaryImage(input.snapshot);
-  if (!imageUrl) {
+  const imageUrls = selectImageUrls({
+    snapshot: input.snapshot,
+    uploadedImageUrls: input.uploadedImageUrls
+  });
+  if (imageUrls.length === 0) {
     throw new Error("缺少可用图片 URL，无法提交 Wayfair");
   }
 
@@ -54,6 +93,15 @@ export async function buildWayfairSubmitRequest(input: {
     questions: input.questions,
     skipQuestionIds: Array.from(coreQuestionIds)
   });
+  const rawAnswers = (answerResult.data as { answers?: unknown }).answers;
+  const answers = Array.isArray(rawAnswers)
+    ? sanitizeAnswers(
+        rawAnswers.filter(
+          (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
+            item && typeof item === "object" && "questionId" in item && "value" in item
+        )
+      )
+    : [];
 
   const request: WayfairSubmitProductAdditionsRequest = {
     supplierId: input.supplierId,
@@ -71,15 +119,22 @@ export async function buildWayfairSubmitRequest(input: {
             productName: input.snapshot.title,
             featureBullets: input.snapshot.bullets?.slice(0, 6) ?? null,
             marketingCopy: input.snapshot.description?.slice(0, 2000) ?? null,
-            media: { images: [imageUrl] },
-            answers: (answerResult.data as { answers: unknown }).answers as
-              | { questionId: string; value: string; parentRank?: number; rank?: number }[]
-              | []
+            media: { images: imageUrls },
+            answers
           }
         ]
       }
     ]
   };
 
-  return { request, answerResult, selected: { manufacturerId, supplierPartNumber, imageUrl } };
+  return {
+    request,
+    answerResult,
+    selected: {
+      manufacturerId,
+      supplierPartNumber,
+      imageUrls,
+      usedUploadedImages: Boolean(input.uploadedImageUrls && input.uploadedImageUrls.length > 0)
+    }
+  };
 }

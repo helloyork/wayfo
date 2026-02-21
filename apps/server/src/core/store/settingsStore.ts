@@ -9,6 +9,7 @@ type HasDataSettings = {
 
 type AppSettings = {
   enumerateVariantsDefault: boolean;
+  primaryImageCandidateCount: number;
   updatedAt: string;
 };
 
@@ -34,11 +35,22 @@ type OpenAiSettings = {
   updatedAt: string;
 };
 
+type R2Settings = {
+  accountId: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  bucketName: string;
+  publicUrlBase: string;
+  lifecycleDays: number;
+  updatedAt: string;
+};
+
 const settingsDir = path.join(dataRoot, "settings");
 const hasDataSettingsPath = path.join(settingsDir, "hasdata.json");
 const appSettingsPath = path.join(settingsDir, "app.json");
 const wayfairSettingsPath = path.join(settingsDir, "wayfair.json");
 const openAiSettingsPath = path.join(settingsDir, "openai.json");
+const r2SettingsPath = path.join(settingsDir, "r2.json");
 
 function normalizeStoredValue(value: string, mode: "trim" | "no-whitespace") {
   const trimmed = value.trim();
@@ -216,13 +228,18 @@ export function getAppSettings() {
   const settings = readAppSettings();
   return {
     enumerateVariantsDefault: settings?.enumerateVariantsDefault ?? false,
+    primaryImageCandidateCount: settings?.primaryImageCandidateCount ?? 4,
     updatedAt: settings?.updatedAt ?? null
   };
 }
 
-export function setAppSettings(input: { enumerateVariantsDefault: boolean }) {
+export function setAppSettings(input: {
+  enumerateVariantsDefault: boolean;
+  primaryImageCandidateCount: number;
+}) {
   const next: AppSettings = {
     enumerateVariantsDefault: input.enumerateVariantsDefault,
+    primaryImageCandidateCount: input.primaryImageCandidateCount,
     updatedAt: new Date().toISOString()
   };
   writeAppSettings(next);
@@ -244,6 +261,20 @@ export function getWayfairActiveSettings() {
     return null;
   }
   return { env, ...settings };
+}
+
+export function setWayfairActiveEnv(env: WayfairEnv) {
+  const previous = readWayfairSettings();
+  if (!previous) {
+    return null;
+  }
+  const next: WayfairSettings = {
+    ...previous,
+    activeEnv: env,
+    updatedAt: new Date().toISOString()
+  };
+  writeWayfairSettings(next);
+  return next;
 }
 
 export function setWayfairSettings(input: {
@@ -292,5 +323,61 @@ export function setOpenAiApiKey(apiKey: string) {
     updatedAt: new Date().toISOString()
   };
   writeOpenAiSettings(next);
+  return next;
+}
+
+function readR2Settings(): R2Settings | null {
+  if (!fs.existsSync(r2SettingsPath)) {
+    return null;
+  }
+  const raw = fs.readFileSync(r2SettingsPath, "utf-8");
+  return JSON.parse(raw) as R2Settings;
+}
+
+function writeR2Settings(next: R2Settings) {
+  ensureDir(settingsDir);
+  fs.writeFileSync(r2SettingsPath, JSON.stringify(next, null, 2));
+}
+
+export function getR2Settings(): R2Settings | null {
+  return readR2Settings();
+}
+
+export function getR2SettingsMeta() {
+  const settings = readR2Settings();
+  if (!settings) {
+    return null;
+  }
+  return {
+    hasCredentials: Boolean(settings.accessKeyId && settings.secretAccessKey),
+    maskedAccessKeyId: settings.accessKeyId
+      ? `${settings.accessKeyId.slice(0, 4)}****${settings.accessKeyId.slice(-4)}`
+      : null,
+    accountId: settings.accountId || null,
+    bucketName: settings.bucketName || null,
+    publicUrlBase: settings.publicUrlBase || null,
+    lifecycleDays: settings.lifecycleDays ?? 7,
+    updatedAt: settings.updatedAt
+  };
+}
+
+export function setR2Settings(input: {
+  accountId: string;
+  accessKeyId: string;
+  secretAccessKey: string;
+  bucketName: string;
+  publicUrlBase: string;
+  lifecycleDays?: number;
+}) {
+  const next: R2Settings = {
+    accountId: normalizeStoredValue(input.accountId, "trim"),
+    accessKeyId: normalizeStoredValue(input.accessKeyId, "no-whitespace"),
+    secretAccessKey: normalizeStoredValue(input.secretAccessKey, "no-whitespace"),
+    bucketName: normalizeStoredValue(input.bucketName, "trim"),
+    publicUrlBase: normalizeStoredValue(input.publicUrlBase, "trim"),
+    lifecycleDays: input.lifecycleDays ?? 7,
+    updatedAt: new Date().toISOString()
+  };
+  writeR2Settings(next);
   return next;
 }

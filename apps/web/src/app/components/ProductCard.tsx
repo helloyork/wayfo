@@ -17,6 +17,7 @@ type ProductSummary = {
   };
   imageName?: string;
   imageUrl?: string;
+  runId: string;
 };
 
 function formatPrice(price?: ProductSummary["price"]) {
@@ -28,14 +29,12 @@ function formatPrice(price?: ProductSummary["price"]) {
 }
 
 export function ProductCard({
-  runId,
   product
 }: {
-  runId: string;
   product: ProductSummary;
 }) {
   const imageSrc = product.imageName
-    ? `${apiBase}/api/runs/${runId}/images/${product.asin}/${encodeURIComponent(product.imageName)}`
+    ? `${apiBase}/api/runs/${product.runId}/images/${product.asin}/${encodeURIComponent(product.imageName)}`
     : product.imageUrl;
 
   return (

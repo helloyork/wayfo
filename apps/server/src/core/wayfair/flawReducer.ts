@@ -89,6 +89,108 @@ function pickPart(
   return request.proposedProductAdditions[0]?.parts[0];
 }
 
+function normalizeText(value: string) {
+  return value.trim().toLowerCase();
+}
+
+function findSpecValue(snapshot: AmazonProductSnapshot, hints: string[]) {
+  const normalizedHints = hints.map(normalizeText);
+  const specs = snapshot.productInformation?.specs ?? {};
+  const features = snapshot.productInformation?.features ?? {};
+  for (const [key, value] of Object.entries({ ...specs, ...features })) {
+    const normalizedKey = normalizeText(key);
+    if (normalizedHints.some((hint) => normalizedKey.includes(hint))) {
+      return value;
+    }
+  }
+  return null;
+}
+
+function parseFirstNumber(value: string) {
+  const match = value.match(/-?\d+(?:\.\d+)?/);
+  if (!match) {
+    return null;
+  }
+  return match[0];
+}
+
+function parseDimensions(value: string) {
+  const matches = value.match(/-?\d+(?:\.\d+)?/g);
+  if (!matches || matches.length < 3) {
+    return null;
+  }
+  return matches.slice(0, 3);
+}
+
+function buildFallbackAnswers(input: {
+  question: WayfairProductAdditionQuestion;
+  snapshot: AmazonProductSnapshot;
+  supplierPartNumber?: string | null;
+}) {
+  const id = input.question.id.toLowerCase();
+  const possible = input.question.possibleAnswers?.map((item) => item.value) ?? [];
+  const pickDefaultChoice = () => {
+    const candidates = ["does not apply", "not applicable", "n/a"];
+    const match = possible.find((value) =>
+      candidates.includes(normalizeText(value))
+    );
+    return match ?? null;
+  };
+
+  if (id.includes("core::manufacturerpartnumber")) {
+    const specValue =
+      findSpecValue(input.snapshot, ["manufacturer part number", "mpn", "part number"]) ??
+      input.snapshot.asin;
+    return specValue ? [{ questionId: input.question.id, value: specValue }] : [];
+  }
+
+  if (id.includes("shippingandfulfillment::leadtime")) {
+    const hintValue = findSpecValue(input.snapshot, [
+      "lead time",
+      "ships in",
+      "ship in",
+      "delivery time",
+      "processing time"
+    ]);
+    const numberValue = hintValue ? parseFirstNumber(hintValue) : null;
+    return numberValue ? [{ questionId: input.question.id, value: numberValue }] : [];
+  }
+  if (id.includes("shippingandfulfillment::weight")) {
+    const hintValue = findSpecValue(input.snapshot, ["shipping weight", "item weight", "weight"]);
+    const numberValue = hintValue ? parseFirstNumber(hintValue) : null;
+    return numberValue ? [{ questionId: input.question.id, value: numberValue }] : [];
+  }
+  if (
+    id.includes("shippingandfulfillment::width") ||
+    id.includes("shippingandfulfillment::height") ||
+    id.includes("shippingandfulfillment::depth")
+  ) {
+    const hintValue = findSpecValue(input.snapshot, ["package dimensions", "carton dimensions"]);
+    const dimensions = hintValue ? parseDimensions(hintValue) : null;
+    if (dimensions) {
+      const [length, width, height] = dimensions;
+      if (id.includes("width")) {
+        return [{ questionId: input.question.id, value: width }];
+      }
+      if (id.includes("height")) {
+        return [{ questionId: input.question.id, value: height }];
+      }
+      if (id.includes("depth")) {
+        return [{ questionId: input.question.id, value: length }];
+      }
+    }
+  }
+
+  if (input.question.isNotApplicableEligible && possible.length > 0) {
+    const defaultChoice = pickDefaultChoice();
+    if (defaultChoice) {
+      return [{ questionId: input.question.id, value: defaultChoice }];
+    }
+  }
+
+  return [];
+}
+
 export function reduceWayfairFlaws(input: {
   request: WayfairSubmitProductAdditionsRequest;
   questions: WayfairProductAdditionQuestion[];
@@ -199,14 +301,52 @@ export function reduceWayfairFlaws(input: {
     if (isMissingFlaw(flaw.flaw)) {
       const derived = derivedByQuestion.get(question.id) ?? [];
       if (derived.length === 0) {
-        unresolvedFlaws += 1;
-        unrepairableFlaws += 1;
+        const fallback = input.snapshot
+          ? buildFallbackAnswers({
+              question,
+              snapshot: input.snapshot,
+              supplierPartNumber: targetPart.supplierPartNumber
+            })
+          : [];
+        const normalizedFallback = fallback
+          .map((answer) => {
+            const normalized = normalizeAnswerValue(String(answer.value ?? ""), question);
+            if (!normalized) {
+              return null;
+            }
+            return { ...answer, value: normalized };
+          })
+          .filter(Boolean) as WayfairAnswer[];
+        if (normalizedFallback.length === 0) {
+          unresolvedFlaws += 1;
+          unrepairableFlaws += 1;
+          suggestions.push({
+            questionId: question.id,
+            flawType: flaw.flawType,
+            flaw: flaw.flaw,
+            repairable: false,
+            reason: "缺少可靠数据，无法自动补齐"
+          });
+          continue;
+        }
+        targetPart.answers = targetPart.answers.filter((answer) => answer.questionId !== question.id);
+        normalizedFallback.forEach((answer) => {
+          targetPart.answers.push({
+            questionId: answer.questionId,
+            value: answer.value,
+            parentRank: answer.parentRank,
+            rank: answer.rank
+          });
+        });
+        appliedFixes += 1;
+        touched.add(question.id);
         suggestions.push({
           questionId: question.id,
           flawType: flaw.flawType,
           flaw: flaw.flaw,
-          repairable: false,
-          reason: "缺少可靠数据，无法自动补齐"
+          repairable: true,
+          reason: "使用默认/兜底值补齐",
+          suggestedValues: normalizedFallback.map((answer) => answer.value)
         });
         continue;
       }

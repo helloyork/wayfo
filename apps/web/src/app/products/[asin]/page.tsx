@@ -4,13 +4,6 @@ import { ProductDetail } from "../../components/ProductDetail";
 
 export const dynamic = "force-dynamic";
 
-type Run = {
-  id: string;
-  amazonUrl: string;
-  status: string;
-  createdAt: string;
-};
-
 type ProductSnapshot = {
   asin: string;
   title: string;
@@ -45,9 +38,19 @@ type ImageIndex = {
   }>;
 };
 
+type GeneratedImage = {
+  type: string;
+  path: string;
+  fileName: string;
+};
+
 type ProductResponse = {
+  runId: string;
+  runStatus: string;
+  runCreatedAt: string;
   product: ProductSnapshot;
   images?: ImageIndex;
+  generatedImages: GeneratedImage[];
 };
 
 export default async function ProductDetailPage({
@@ -55,24 +58,22 @@ export default async function ProductDetailPage({
 }: {
   params: { asin: string };
 }) {
-  const runs = await fetchJson<Run[]>("/api/runs");
-  const latestRun = runs[0];
-
-  if (!latestRun) {
-    return <div className="empty">暂无 Run 数据</div>;
-  }
-
-  const detail = await fetchJson<ProductResponse>(
-    `/api/runs/${latestRun.id}/products/${params.asin}`
-  );
+  const detail = await fetchJson<ProductResponse>(`/api/products/${params.asin}`);
 
   return (
     <div className="stack">
       <div className="row">
         <Link href="/products">返回产品列表</Link>
-        <div className="muted">Run {latestRun.id}</div>
+        <div className="muted">
+          来源 Run: {detail.runId} · 状态: {detail.runStatus}
+        </div>
       </div>
-      <ProductDetail runId={latestRun.id} product={detail.product} images={detail.images} />
+      <ProductDetail
+        runId={detail.runId}
+        product={detail.product}
+        images={detail.images}
+        generatedImages={detail.generatedImages}
+      />
     </div>
   );
 }

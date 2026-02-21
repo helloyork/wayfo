@@ -4,13 +4,6 @@ import { ProductGrid } from "../components/ProductGrid";
 
 export const dynamic = "force-dynamic";
 
-type Run = {
-  id: string;
-  amazonUrl: string;
-  status: string;
-  createdAt: string;
-};
-
 type ProductSummary = {
   asin: string;
   title: string;
@@ -27,35 +20,27 @@ type ProductSummary = {
   };
   imageName?: string;
   imageUrl?: string;
+  runId: string;
+  runStatus: string;
+  runCreatedAt: string;
 };
 
 export default async function ProductsPage() {
-  const runs = await fetchJson<Run[]>("/api/runs");
-  const latestRun = runs[0];
-
-  if (!latestRun) {
-    return <div className="empty">暂无 Run 数据</div>;
-  }
-
-  const products = await fetchJson<ProductSummary[]>(
-    `/api/runs/${latestRun.id}/products`
-  );
+  const products = await fetchJson<ProductSummary[]>("/api/products");
 
   return (
     <div className="stack">
       <div className="row">
         <div className="page-header">
-          <h2>产品预览</h2>
-          <div className="muted">
-            最新 Run: {latestRun.id} · 状态: {latestRun.status}
-          </div>
+          <h2>产品总览</h2>
+          <div className="muted">按 ASIN 汇总展示全部产品</div>
         </div>
-        <Link className="muted" href={`/runs/${latestRun.id}`}>
-          查看 Run 详情
+        <Link className="muted" href="/runs">
+          查看 Runs
         </Link>
       </div>
 
-      <ProductGrid runId={latestRun.id} products={products} />
+      <ProductGrid products={products} />
     </div>
   );
 }

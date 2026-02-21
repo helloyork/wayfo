@@ -3,6 +3,8 @@ import cors from "cors";
 import { runsRouter } from "./routes/runs";
 import { settingsRouter } from "./routes/settings";
 import { initRouter } from "./routes/init";
+import { wayfairRouter } from "./routes/wayfair";
+import { productsRouter } from "./routes/products";
 
 export function createServer() {
   const app = express();
@@ -14,8 +16,10 @@ export function createServer() {
   });
 
   app.use("/api/runs", runsRouter);
+  app.use("/api/products", productsRouter);
   app.use("/api/settings", settingsRouter);
   app.use("/api/init", initRouter);
+  app.use("/api/wayfair", wayfairRouter);
 
   return app;
 }

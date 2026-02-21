@@ -41,24 +41,21 @@ export function RunEventStream({ runId }: { runId: string }) {
   }, [sourceUrl]);
 
   return (
-    <div className="stack">
+    <div className="card stack">
       <div className="row">
+        <strong>事件流</strong>
         <span className="badge">状态: {status}</span>
       </div>
-      <div className="card stack">
-        <strong>事件流</strong>
-        {events.length === 0 ? (
-          <div className="empty">暂无事件</div>
-        ) : (
-          events.map((event) => (
-            <div key={event.id} className="muted">
-              {event.timestamp} · {event.type} {event.step ? `(${event.step})` : ""}{" "}
-              {event.message ?? ""}
-              {event.data?.err ? ` · ${JSON.stringify(event.data.err)}` : ""}
-            </div>
-          ))
-        )}
-      </div>
+      {events.length === 0 ? (
+        <div className="empty">暂无事件</div>
+      ) : (
+        events.map((event) => (
+          <div key={event.id} className="muted">
+            {event.timestamp} · {event.type} {event.step ? `(${event.step})` : ""} {event.message ?? ""}
+            {event.data?.err ? ` · ${JSON.stringify(event.data.err)}` : ""}
+          </div>
+        ))
+      )}
     </div>
   );
 }

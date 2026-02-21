@@ -55,9 +55,7 @@ export function WayfairSettings() {
       return;
     }
     const payload = (await res.json()) as WayfairSettingsResponse;
-    if (payload.activeEnv) {
-      setEnv(payload.activeEnv);
-    }
+    setEnv(payload.activeEnv ?? "sandbox");
     setSandboxSummary(payload.sandbox);
     setProdSummary(payload.prod);
 
@@ -85,7 +83,6 @@ export function WayfairSettings() {
     setSupplierId(summary.supplierId ?? "");
     setClientId("");
     setClientSecret("");
-    setStatus(null);
   }, [env, sandboxSummary, prodSummary]);
 
   useEffect(() => {
@@ -138,6 +135,32 @@ export function WayfairSettings() {
     }
   };
 
+  const onEnvChange = async (newEnv: WayfairEnv) => {
+    setEnv(newEnv);
+    setLoading(true);
+    setStatus(null);
+    try {
+      const res = await fetch(`${apiBase}/api/settings/wayfair`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ activeEnv: newEnv })
+      });
+      if (!res.ok) {
+        const payload = (await res.json()) as { message?: string };
+        throw new Error(payload.message ?? "切换失败");
+      }
+      await loadSettings();
+      setStatusTone("success");
+      setStatus(`已切换到 ${newEnv === "sandbox" ? "Sandbox（沙盒）" : "Production（生产）"}`);
+    } catch (error) {
+      await loadSettings();
+      setStatusTone("danger");
+      setStatus(error instanceof Error ? error.message : "切换失败");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const onValidate = async () => {
     setLoading(true);
     try {
@@ -172,11 +195,12 @@ export function WayfairSettings() {
       <div className="muted">填写并切换 API 目的地（沙盒/生产），用于获取 token 与后续 GraphQL 调用。</div>
 
       <label className="stack">
-        <span className="muted">环境</span>
+        <span className="muted">当前环境</span>
         <select
           className="input"
           value={env}
-          onChange={(event) => setEnv(event.target.value as WayfairEnv)}
+          onChange={(event) => onEnvChange(event.target.value as WayfairEnv)}
+          disabled={loading}
         >
           <option value="sandbox">Sandbox（沙盒）</option>
           <option value="prod">Production（生产）</option>

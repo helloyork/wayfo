@@ -9,6 +9,17 @@ export type AmazonProductSnapshot = {
   canonicalUrl: string;
   title: string;
   brand?: string;
+  description?: string;
+  dimensions?: {
+    value: string;
+    source: string;
+    updatedAt?: string;
+  };
+  weight?: {
+    value: string;
+    source: string;
+    updatedAt?: string;
+  };
   availability: {
     isAvailable: boolean;
   };

@@ -30,6 +30,7 @@ export const runsRouter = Router();
 const createRunSchema = z.object({
   amazonUrl: z.string().min(1),
   marketContext: z.string().optional(),
+  manufacturerId: z.string().optional(),
   enumerateVariants: z.boolean().optional()
 });
 
@@ -55,6 +56,11 @@ function readQuestionsArtifact(runId: string) {
 
 function readSubmitRequest(runId: string) {
   const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "request.json");
+  return readJson<unknown>(fullPath);
+}
+
+function readSubmitDraft(runId: string) {
+  const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "draft.json");
   return readJson<unknown>(fullPath);
 }
 
@@ -89,6 +95,10 @@ function readLatestSubmissions(runId: string) {
 function readLatestRepairSuggestions(runId: string) {
   const dirPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "repairs");
   return readLatestJsonInDir(dirPath, "suggestions-");
+}
+
+function getGeneratedImagesDir(runId: string, asin: string, type: string) {
+  return path.join(runsRoot, runId, "artifacts", "images", "generated", asin, type);
 }
 
 function normalizeReviewRequest(
@@ -317,6 +327,41 @@ runsRouter.get("/:runId/images/:asin/:imageName", (req, res) => {
   res.sendFile(imagePath);
 });
 
+runsRouter.get("/:runId/generated-images/:asin/:type/:imageName", (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const type = decodeURIComponent(req.params.type);
+  const imageName = decodeURIComponent(req.params.imageName);
+  const baseDir = path.resolve(getGeneratedImagesDir(run.id, req.params.asin, type));
+  const imagePath = path.resolve(path.join(baseDir, imageName));
+  if (!imagePath.startsWith(baseDir)) {
+    return sendError(res, {
+      code: "INVALID_IMAGE_PATH",
+      message: "Invalid image path"
+    });
+  }
+  if (!fs.existsSync(imagePath)) {
+    return sendError(
+      res,
+      {
+        code: "IMAGE_NOT_FOUND",
+        message: "Image not found"
+      },
+      404
+    );
+  }
+  res.sendFile(imagePath);
+});
+
 runsRouter.post("/:runId/actions", (req, res) => {
   const parsed = actionSchema.safeParse(req.body);
   if (!parsed.success) {
@@ -428,6 +473,89 @@ runsRouter.get("/:runId/wayfair/request", (req, res) => {
     );
   }
   res.json({ request });
+});
+
+runsRouter.get("/:runId/wayfair/questions", (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const questions = readQuestionsArtifact(run.id);
+  if (!questions) {
+    return sendError(res, {
+      code: "QUESTIONS_NOT_FOUND",
+      message: "Wayfair questions not found"
+    }, 404);
+  }
+  res.json({ questions });
+});
+
+runsRouter.get("/:runId/wayfair/draft", (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const draft = readSubmitDraft(run.id);
+  if (!draft) {
+    return sendError(
+      res,
+      {
+        code: "DRAFT_NOT_FOUND",
+        message: "Wayfair submit draft not found"
+      },
+      404
+    );
+  }
+  res.json({ draft });
+});
+
+runsRouter.post("/:runId/wayfair/draft", async (req, res) => {
+  const run = getRun(req.params.runId);
+  if (!run) {
+    return sendError(
+      res,
+      {
+        code: "RUN_NOT_FOUND",
+        message: "Run not found"
+      },
+      404
+    );
+  }
+  const parsed = reviewSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "request is required"
+    });
+  }
+  try {
+    createArtifact({
+      runId: run.id,
+      type: "wayfair/submit/draft",
+      relativePath: "wayfair/submit/draft.json",
+      content: parsed.data.request
+    });
+    res.json({ ok: true });
+  } catch (error) {
+    sendError(res, {
+      code: "DRAFT_SAVE_FAILED",
+      message: error instanceof Error ? error.message : "Draft save failed"
+    });
+  }
 });
 
 runsRouter.post("/:runId/wayfair/review", async (req, res) => {

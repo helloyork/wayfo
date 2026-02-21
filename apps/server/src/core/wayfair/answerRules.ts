@@ -23,7 +23,8 @@ const coreQuestionIds = new Set([
   "core::productName",
   "core::amazonStandardIdentificationNumber",
   "featureDescription::genericFeatures",
-  "featureDescription::romanceCopy"
+  "featureDescription::romanceCopy",
+  "media::imageValue"
 ]);
 
 export function flattenQuestions(questions: WayfairProductAdditionQuestion[]) {
