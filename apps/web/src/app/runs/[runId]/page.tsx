@@ -67,7 +67,7 @@ export default async function RunDetailPage({
 
   return (
     <div className="stack">
-      <div className="card stack">
+      <div className={`card stack${detail.run.status === "COMPLETED" ? " card-success" : ""}`}>
         <Link href="/runs">返回</Link>
         <div className="row">
           <h2>Run 基础信息</h2>

@@ -5,7 +5,6 @@ import { nanoid } from "nanoid";
 import { z } from "zod";
 import {
   RunEvent,
-  WayfairAnswer,
   WayfairProductAdditionQuestion,
   WayfairSubmitProductAdditionsRequest
 } from "@wayfo/shared";
@@ -28,8 +27,7 @@ import {
   updateRun
 } from "../../core/store/runStore";
 import { getAppSettings } from "../../core/store/settingsStore";
-import { startRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
-import { normalizeAnswersForPart } from "../../core/wayfair/answerRules";
+import { startRun, resumeRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
 
 export const runsRouter = Router();
 
@@ -55,6 +53,15 @@ function readJson<T>(filePath: string): T | null {
   return JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
 }
 
+function readJsonWithMeta<T>(filePath: string): { data: T; updatedAt: string } | null {
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
+  const stat = fs.statSync(filePath);
+  return { data: raw, updatedAt: stat.mtime.toISOString() };
+}
+
 function readQuestionsArtifact(runId: string) {
   const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "questions.json");
   return readJson<WayfairProductAdditionQuestion[]>(fullPath);
@@ -62,12 +69,12 @@ function readQuestionsArtifact(runId: string) {
 
 function readSubmitRequest(runId: string) {
   const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "request.json");
-  return readJson<unknown>(fullPath);
+  return readJsonWithMeta<unknown>(fullPath);
 }
 
 function readSubmitDraft(runId: string) {
   const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "draft.json");
-  return readJson<unknown>(fullPath);
+  return readJsonWithMeta<unknown>(fullPath);
 }
 
 function readLatestJsonInDir<T>(dirPath: string, prefix: string) {
@@ -111,45 +118,10 @@ function normalizeReviewRequest(
   request: Record<string, unknown>,
   questions: WayfairProductAdditionQuestion[]
 ) {
-  const questionMap = new Map(questions.map((question) => [question.id, question]));
-  const touched = new Set<string>();
-  let removedAnswers = 0;
-  let normalizedAnswers = 0;
-  let fixedRanks = 0;
-  const proposed = Array.isArray(
-    (request as { proposedProductAdditions?: unknown }).proposedProductAdditions
-  )
-    ? ((request as { proposedProductAdditions?: unknown }).proposedProductAdditions as Array<
-        Record<string, unknown>
-      >)
-    : [];
-  const next = {
-    ...request,
-    proposedProductAdditions: proposed.map((addition) => {
-      const parts = Array.isArray((addition as { parts?: unknown }).parts)
-        ? ((addition as { parts?: unknown }).parts as Array<Record<string, unknown>>)
-        : [];
-      return {
-        ...addition,
-        parts: parts.map((part) => {
-          const answers = Array.isArray((part as { answers?: unknown }).answers)
-            ? ((part as { answers?: unknown }).answers as WayfairAnswer[])
-            : [];
-          const normalized = normalizeAnswersForPart(answers, questionMap, touched);
-          removedAnswers += normalized.removedAnswers;
-          normalizedAnswers += normalized.normalizedAnswers;
-          fixedRanks += normalized.fixedRanks;
-          return {
-            ...part,
-            answers: normalized.answers
-          };
-        })
-      };
-    })
-  };
+  void questions;
   return {
-    request: next,
-    summary: { removedAnswers, normalizedAnswers, fixedRanks, touchedQuestions: Array.from(touched) }
+    request,
+    summary: { removedAnswers: 0, normalizedAnswers: 0, fixedRanks: 0, touchedQuestions: [] }
   };
 }
 
@@ -368,7 +340,7 @@ runsRouter.get("/:runId/generated-images/:asin/:type/:imageName", (req, res) => 
   res.sendFile(imagePath);
 });
 
-runsRouter.post("/:runId/actions", (req, res) => {
+runsRouter.post("/:runId/actions", async (req, res) => {
   const parsed = actionSchema.safeParse(req.body);
   if (!parsed.success) {
     return sendError(res, {
@@ -386,8 +358,29 @@ runsRouter.post("/:runId/actions", (req, res) => {
   }
 
   const action = parsed.data.action;
-  const nextStatus =
-    action === "pause" ? "PAUSED" : action === "resume" ? "RUNNING" : "CANCELLED";
+
+  if (action === "resume") {
+    if (run.status !== "NEEDS_REVIEW" && run.status !== "PAUSED") {
+      return sendError(res, {
+        code: "INVALID_STATE",
+        message: `Cannot resume run with status ${run.status}`
+      });
+    }
+
+    res.json({ ok: true, message: "Run resuming" });
+
+    resumeRun(run.id).catch((error) => {
+      log({
+        level: "error",
+        runId: run.id,
+        message: "Resume run failed",
+        err: { error: String(error) }
+      });
+    });
+    return;
+  }
+
+  const nextStatus = action === "pause" ? "PAUSED" : "CANCELLED";
   const updated = updateRun(run.id, { status: nextStatus });
 
   const event: RunEvent = {
@@ -478,7 +471,7 @@ runsRouter.get("/:runId/wayfair/request", (req, res) => {
       404
     );
   }
-  res.json({ request });
+  res.json({ request: request.data, updatedAt: request.updatedAt });
 });
 
 runsRouter.get("/:runId/wayfair/questions", (req, res) => {
@@ -526,7 +519,7 @@ runsRouter.get("/:runId/wayfair/draft", (req, res) => {
       404
     );
   }
-  res.json({ draft });
+  res.json({ draft: draft.data, updatedAt: draft.updatedAt });
 });
 
 runsRouter.post("/:runId/wayfair/draft", async (req, res) => {

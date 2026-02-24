@@ -7,7 +7,7 @@ import { getOpenAiApiKey } from "../store/settingsStore";
 import { getImagePool } from "../pools/registry";
 import { dataRoot, ensureDir } from "../paths";
 import { log } from "../logger";
-import type { ImageType } from "./classifier";
+import type { ImageType } from "./planner";
 
 export type GeneratedImage = {
   sourceUrl: string;
@@ -50,9 +50,12 @@ function generateOutputHash(input: {
   quality: "low" | "medium" | "high";
   model: string;
   sourceFingerprint: string;
+  variantId?: string;
 }): string {
+  const base = `${input.sourceFingerprint}:${input.prompt}:${input.quality}:${input.model}`;
+  const fingerprint = input.variantId ? `${base}:${input.variantId}` : base;
   return createHash("sha1")
-    .update(`${input.sourceFingerprint}:${input.prompt}:${input.quality}:${input.model}`)
+    .update(fingerprint)
     .digest("hex")
     .slice(0, 16);
 }
@@ -88,10 +91,12 @@ async function generateSingleImage(input: {
   type: ImageType;
   quality: "low" | "medium" | "high";
   outputDir: string;
+  variantId?: string;
 }): Promise<GeneratedImage> {
-  const { openai, sourcePath, sourceUrl, prompt, type, quality, outputDir } = input;
+  const { openai, sourcePath, sourceUrl, prompt, type, quality, outputDir, variantId } = input;
   const qualityConfig = qualityMap[quality];
-  const model = "dall-e-2";
+  const model = "gpt-image-1";
+  const inputFidelity = "low";
 
   if (!fs.existsSync(sourcePath)) {
     throw new Error(`Source image not found: ${sourcePath}`);
@@ -103,7 +108,8 @@ async function generateSingleImage(input: {
     prompt,
     quality,
     model,
-    sourceFingerprint
+    sourceFingerprint,
+    variantId
   });
   const outputExt = ".png";
   const outputFileName = `${outputHash}${outputExt}`;
@@ -151,7 +157,9 @@ async function generateSingleImage(input: {
     image: sourceFile,
     prompt,
     n: 1,
-    size: qualityConfig.size
+    size: qualityConfig.size,
+    quality: qualityConfig.openaiQuality,
+    input_fidelity: inputFidelity
   });
 
   if (!response.data || response.data.length === 0) {
@@ -200,6 +208,7 @@ export async function generateImages(input: {
     type: ImageType;
     prompt: string;
     quality?: "low" | "medium" | "high";
+    variantId?: string;
   }>;
   outputDir: string;
 }): Promise<GenerationResult> {
@@ -229,7 +238,8 @@ export async function generateImages(input: {
         prompt: task.prompt,
         type: task.type,
         quality,
-        outputDir: input.outputDir
+        outputDir: input.outputDir,
+        variantId: task.variantId
       });
       return { success: true as const, result };
     } catch (error) {
@@ -288,7 +298,8 @@ export async function generateImagesForPlan(input: {
       sourcePath: img.sourcePath,
       type: img.type,
       prompt: img.promptTemplate,
-      quality: input.plan.config.types[img.type].quality
+      variantId: img.variantId,
+      quality: (img.type === "primary" ? "high" : "medium") as "low" | "medium" | "high"
     }));
 
     const result = await generateImages({

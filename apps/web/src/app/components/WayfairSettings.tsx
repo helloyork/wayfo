@@ -103,9 +103,22 @@ export function WayfairSettings() {
   }, [env]);
 
   const onSave = async () => {
-    if (!clientId.trim() || !clientSecret.trim() || !audience.trim() || !supplierId.trim()) {
+    const trimmedClientId = clientId.trim();
+    const trimmedClientSecret = clientSecret.trim();
+    const currentSummary = env === "sandbox" ? sandboxSummary : prodSummary;
+    if (!audience.trim() || !supplierId.trim()) {
       setStatusTone("warning");
-      setStatus("请填写 env、app id、密钥、audience 与 supplierId");
+      setStatus("请填写 audience 与 supplierId");
+      return;
+    }
+    if (Boolean(trimmedClientId) !== Boolean(trimmedClientSecret)) {
+      setStatusTone("warning");
+      setStatus("clientId 与 clientSecret 需要同时填写");
+      return;
+    }
+    if (!currentSummary?.hasCredentials && (!trimmedClientId || !trimmedClientSecret)) {
+      setStatusTone("warning");
+      setStatus("请补全 clientId 与 clientSecret");
       return;
     }
     setLoading(true);
@@ -115,8 +128,8 @@ export function WayfairSettings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           env,
-          clientId,
-          clientSecret,
+          clientId: trimmedClientId || undefined,
+          clientSecret: trimmedClientSecret || undefined,
           audience,
           supplierId
         })
@@ -164,10 +177,15 @@ export function WayfairSettings() {
   const onValidate = async () => {
     setLoading(true);
     try {
-      const hasCredentialsOverride = Boolean(clientId.trim()) || Boolean(clientSecret.trim());
-      const body = hasCredentialsOverride
-        ? { env, clientId, clientSecret, audience, supplierId }
-        : {};
+      const trimmedClientId = clientId.trim();
+      const trimmedClientSecret = clientSecret.trim();
+      const body = {
+        env,
+        audience,
+        supplierId,
+        ...(trimmedClientId ? { clientId: trimmedClientId } : {}),
+        ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {})
+      };
       const res = await fetch(`${apiBase}/api/settings/wayfair/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

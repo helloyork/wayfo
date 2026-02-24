@@ -49,15 +49,25 @@ export function R2Settings() {
   }, []);
 
   const onSave = async () => {
+    const trimmedAccessKeyId = accessKeyId.trim();
+    const trimmedSecretAccessKey = secretAccessKey.trim();
     if (
       !accountId.trim() ||
-      !accessKeyId.trim() ||
-      !secretAccessKey.trim() ||
       !bucketName.trim() ||
       !publicUrlBase.trim()
     ) {
       setStatusTone("warning");
       setStatus("请填写所有必填字段");
+      return;
+    }
+    if (Boolean(trimmedAccessKeyId) !== Boolean(trimmedSecretAccessKey)) {
+      setStatusTone("warning");
+      setStatus("accessKeyId 与 secretAccessKey 需要同时填写");
+      return;
+    }
+    if (!hasCredentials && (!trimmedAccessKeyId || !trimmedSecretAccessKey)) {
+      setStatusTone("warning");
+      setStatus("请补全 accessKeyId 与 secretAccessKey");
       return;
     }
     setLoading(true);
@@ -67,8 +77,8 @@ export function R2Settings() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           accountId,
-          accessKeyId,
-          secretAccessKey,
+          accessKeyId: trimmedAccessKeyId || undefined,
+          secretAccessKey: trimmedSecretAccessKey || undefined,
           bucketName,
           publicUrlBase,
           lifecycleDays
@@ -93,10 +103,16 @@ export function R2Settings() {
   const onValidate = async () => {
     setLoading(true);
     try {
-      const hasOverride = Boolean(accessKeyId.trim()) || Boolean(secretAccessKey.trim());
-      const body = hasOverride
-        ? { accountId, accessKeyId, secretAccessKey, bucketName, publicUrlBase, lifecycleDays }
-        : {};
+      const trimmedAccessKeyId = accessKeyId.trim();
+      const trimmedSecretAccessKey = secretAccessKey.trim();
+      const body = {
+        accountId,
+        bucketName,
+        publicUrlBase,
+        lifecycleDays,
+        ...(trimmedAccessKeyId ? { accessKeyId: trimmedAccessKeyId } : {}),
+        ...(trimmedSecretAccessKey ? { secretAccessKey: trimmedSecretAccessKey } : {})
+      };
       const res = await fetch(`${apiBase}/api/settings/r2/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },

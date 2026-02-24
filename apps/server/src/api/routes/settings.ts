@@ -34,8 +34,8 @@ const appSettingsSchema = z.object({
 
 const wayfairSettingsSchema = z.object({
   env: z.enum(["sandbox", "prod"]),
-  clientId: z.string().min(1),
-  clientSecret: z.string().min(1),
+  clientId: z.string().min(1).optional(),
+  clientSecret: z.string().min(1).optional(),
   audience: z.string().min(1),
   supplierId: z.string().min(1)
 });
@@ -49,6 +49,28 @@ function maskApiKey(apiKey: string) {
     return "***";
   }
   return `${apiKey.slice(0, 3)}***${apiKey.slice(-3)}`;
+}
+
+function hasPartialPair(value?: string, other?: string) {
+  return Boolean(value?.trim()) !== Boolean(other?.trim());
+}
+
+function resolveWayfairCredentials(
+  env: "sandbox" | "prod",
+  input: { clientId?: string; clientSecret?: string; audience: string; supplierId: string }
+) {
+  const previous = getWayfairSettingsAll();
+  const previousEnv = env === "sandbox" ? previous?.sandbox : previous?.prod;
+  const clientId = input.clientId?.trim() || previousEnv?.clientId;
+  const clientSecret = input.clientSecret?.trim() || previousEnv?.clientSecret;
+  return { clientId, clientSecret };
+}
+
+function resolveR2Credentials(input: { accessKeyId?: string; secretAccessKey?: string }) {
+  const previous = getR2Settings();
+  const accessKeyId = input.accessKeyId?.trim() || previous?.accessKeyId;
+  const secretAccessKey = input.secretAccessKey?.trim() || previous?.secretAccessKey;
+  return { accessKeyId, secretAccessKey };
 }
 
 settingsRouter.get("/hasdata", (_req, res) => {
@@ -226,10 +248,23 @@ settingsRouter.post("/wayfair", (req, res) => {
       message: "Wayfair credentials are required"
     });
   }
+  if (hasPartialPair(parsed.data.clientId, parsed.data.clientSecret)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "clientId 与 clientSecret 需要同时填写"
+    });
+  }
+  const resolved = resolveWayfairCredentials(parsed.data.env, parsed.data);
+  if (!resolved.clientId || !resolved.clientSecret) {
+    return sendError(res, {
+      code: "WAYFAIR_SETTINGS_MISSING",
+      message: "Wayfair 凭据缺失，请补全 clientId 与 clientSecret"
+    });
+  }
   setWayfairSettings({
     env: parsed.data.env,
-    clientId: parsed.data.clientId.trim(),
-    clientSecret: parsed.data.clientSecret.trim(),
+    clientId: resolved.clientId,
+    clientSecret: resolved.clientSecret,
     audience: parsed.data.audience.trim(),
     supplierId: parsed.data.supplierId.trim()
   });
@@ -245,19 +280,34 @@ settingsRouter.post("/wayfair/validate", async (req, res) => {
       message: "Wayfair credentials are required"
     });
   }
+  if (parsed.success && hasPartialPair(settings.clientId, settings.clientSecret)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "clientId 与 clientSecret 需要同时填写"
+    });
+  }
+  const resolved = parsed.success
+    ? resolveWayfairCredentials(settings.env, settings)
+    : { clientId: settings.clientId, clientSecret: settings.clientSecret };
+  if (!resolved.clientId || !resolved.clientSecret) {
+    return sendError(res, {
+      code: "WAYFAIR_SETTINGS_MISSING",
+      message: "Wayfair 凭据缺失，请补全 clientId 与 clientSecret"
+    });
+  }
 
   try {
     const token = await validateWayfairCredentials({
       env: settings.env,
-      clientId: settings.clientId.trim(),
-      clientSecret: settings.clientSecret.trim(),
+      clientId: resolved.clientId.trim(),
+      clientSecret: resolved.clientSecret.trim(),
       audience: settings.audience.trim()
     });
     if (parsed.success) {
       setWayfairSettings({
         env: settings.env,
-        clientId: settings.clientId.trim(),
-        clientSecret: settings.clientSecret.trim(),
+        clientId: resolved.clientId.trim(),
+        clientSecret: resolved.clientSecret.trim(),
         audience: settings.audience.trim(),
         supplierId: settings.supplierId.trim()
       });
@@ -277,8 +327,8 @@ settingsRouter.post("/wayfair/validate", async (req, res) => {
 
 const r2SettingsSchema = z.object({
   accountId: z.string().min(1),
-  accessKeyId: z.string().min(1),
-  secretAccessKey: z.string().min(1),
+  accessKeyId: z.string().min(1).optional(),
+  secretAccessKey: z.string().min(1).optional(),
   bucketName: z.string().min(1),
   publicUrlBase: z.string().min(1),
   lifecycleDays: z.number().int().min(1).max(365).optional()
@@ -305,10 +355,23 @@ settingsRouter.post("/r2", (req, res) => {
       message: "R2 credentials are required"
     });
   }
+  if (hasPartialPair(parsed.data.accessKeyId, parsed.data.secretAccessKey)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "accessKeyId 与 secretAccessKey 需要同时填写"
+    });
+  }
+  const resolved = resolveR2Credentials(parsed.data);
+  if (!resolved.accessKeyId || !resolved.secretAccessKey) {
+    return sendError(res, {
+      code: "R2_SETTINGS_MISSING",
+      message: "R2 凭据缺失，请补全 accessKeyId 与 secretAccessKey"
+    });
+  }
   setR2Settings({
     accountId: parsed.data.accountId,
-    accessKeyId: parsed.data.accessKeyId,
-    secretAccessKey: parsed.data.secretAccessKey,
+    accessKeyId: resolved.accessKeyId,
+    secretAccessKey: resolved.secretAccessKey,
     bucketName: parsed.data.bucketName,
     publicUrlBase: parsed.data.publicUrlBase,
     lifecycleDays: parsed.data.lifecycleDays
@@ -318,13 +381,26 @@ settingsRouter.post("/r2", (req, res) => {
 
 settingsRouter.post("/r2/validate", async (req, res) => {
   const parsed = r2SettingsSchema.safeParse(req.body);
-  const settings = parsed.success
-    ? parsed.data
-    : getR2Settings();
+  const settings = parsed.success ? parsed.data : getR2Settings();
   if (!settings) {
     return sendError(res, {
       code: "INVALID_INPUT",
       message: "R2 credentials are required"
+    });
+  }
+  if (parsed.success && hasPartialPair(settings.accessKeyId, settings.secretAccessKey)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "accessKeyId 与 secretAccessKey 需要同时填写"
+    });
+  }
+  const resolved = parsed.success
+    ? resolveR2Credentials(settings)
+    : { accessKeyId: settings.accessKeyId, secretAccessKey: settings.secretAccessKey };
+  if (!resolved.accessKeyId || !resolved.secretAccessKey) {
+    return sendError(res, {
+      code: "R2_SETTINGS_MISSING",
+      message: "R2 凭据缺失，请补全 accessKeyId 与 secretAccessKey"
     });
   }
 
@@ -333,8 +409,8 @@ settingsRouter.post("/r2/validate", async (req, res) => {
     const client = new S3Client({
       endpoint: `https://${settings.accountId}.r2.cloudflarestorage.com`,
       credentials: {
-        accessKeyId: settings.accessKeyId,
-        secretAccessKey: settings.secretAccessKey
+        accessKeyId: resolved.accessKeyId,
+        secretAccessKey: resolved.secretAccessKey
       },
       region: "auto"
     });
@@ -344,8 +420,8 @@ settingsRouter.post("/r2/validate", async (req, res) => {
     if (parsed.success) {
       setR2Settings({
         accountId: settings.accountId,
-        accessKeyId: settings.accessKeyId,
-        secretAccessKey: settings.secretAccessKey,
+        accessKeyId: resolved.accessKeyId,
+        secretAccessKey: resolved.secretAccessKey,
         bucketName: settings.bucketName,
         publicUrlBase: settings.publicUrlBase,
         lifecycleDays: settings.lifecycleDays

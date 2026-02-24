@@ -1,4 +1,4 @@
-import { ClassifiedImage, ImageType, groupImagesByType } from "./classifier";
+export type ImageType = "primary" | "other";
 
 export type GenerationTask = {
   asin: string;
@@ -9,6 +9,7 @@ export type GenerationTask = {
     type: ImageType;
     candidateCount: number;
     promptTemplate: string;
+    variantId?: string;
   }>;
 };
 
@@ -17,137 +18,89 @@ export type GenerationPlan = {
   variantAsins: string[];
   tasks: GenerationTask[];
   sharedImageSlots: string[];
-  config: ImageGenerationConfig;
+  config: SimplifiedImageGenerationConfig;
 };
 
-export type ImageGenerationConfig = {
+export type SimplifiedImageGenerationConfig = {
   primaryImageCandidateCount: number;
-  types: Record<
-    ImageType,
-    {
-      enabled: boolean;
-      candidates: number | "use_primaryImageCandidateCount";
-      quality: "low" | "medium" | "high";
-    }
-  >;
   maxImagesPerProduct: number;
 };
 
-const defaultConfig: ImageGenerationConfig = {
+const defaultConfig: SimplifiedImageGenerationConfig = {
   primaryImageCandidateCount: 4,
-  types: {
-    primary: { enabled: true, candidates: "use_primaryImageCandidateCount", quality: "high" },
-    dimension: { enabled: true, candidates: 1, quality: "medium" },
-    selling_point: { enabled: true, candidates: 1, quality: "medium" },
-    lifestyle: { enabled: true, candidates: 1, quality: "low" },
-    other: { enabled: false, candidates: 1, quality: "low" }
-  },
   maxImagesPerProduct: 8
 };
 
-const promptTemplates: Record<ImageType, string[]> = {
-  primary: [
-    "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: front view.",
-    "Rerender this product image with a clean light gray studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: 45-degree side view.",
-    "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: side view.",
-    "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: top-down view."
-  ],
-  dimension: [
-    "Rerender this product dimension/measurement image with a clean white background. Maintain all measurement lines, numbers, and scale indicators clearly visible. Keep the product proportions accurate. Use clean, professional styling without watermarks or extra text."
-  ],
-  selling_point: [
-    "Rerender this product feature/detail image with a clean neutral background. Highlight the specific feature or material detail shown. Maintain accurate colors and textures. Use professional close-up styling without watermarks."
-  ],
-  lifestyle: [
-    "Rerender this lifestyle/context image showing the product in use. Maintain a natural, realistic setting. Keep the product as the focal point. Use warm, inviting lighting. Remove any watermarks or unwanted text."
-  ],
-  other: [
-    "Rerender this product image with a clean neutral background. Maintain the original content and layout. Use professional styling without watermarks."
-  ]
+const PRIMARY_PROMPT =
+  "Generate entirely different camera angle with a professional photographic aesthetic on a solid white background. Maintain strict consistency in the number of products, as well as their materials, colors, and aspect ratios, as shown in the original image.";
+
+const NON_PRIMARY_PROMPT =
+  "Generate entirely different designs and background images for related content while ensuring continuity and consistency of the object content. Maintain the product's functional expression, aspect ratio, materials, and colors. The objects, people, and layout must differ from the original image, but all product dimensions and specifications must be strictly preserved.";
+
+export type SimpleImageInput = {
+  url: string;
+  localPath: string;
+  isPrimary: boolean;
 };
 
-function getPromptForCandidate(type: ImageType, candidateIndex: number): string {
-  const templates = promptTemplates[type];
-  return templates[candidateIndex % templates.length];
-}
-
-function getCandidateCount(type: ImageType, config: ImageGenerationConfig): number {
-  const typeConfig = config.types[type];
-  if (!typeConfig.enabled) {
-    return 0;
-  }
-  if (typeConfig.candidates === "use_primaryImageCandidateCount") {
-    return config.primaryImageCandidateCount;
-  }
-  return typeConfig.candidates;
-}
-
-export function createGenerationPlan(input: {
+export function createSimpleGenerationPlan(input: {
   mainAsin: string;
-  mainImages: ClassifiedImage[];
+  mainPrimaryImage: SimpleImageInput;
+  mainOtherImages: SimpleImageInput[];
   variantAsins: string[];
-  variantImages: Map<string, ClassifiedImage[]>;
-  config?: Partial<ImageGenerationConfig>;
+  variantPrimaryImages: Map<string, SimpleImageInput>;
+  config?: Partial<SimplifiedImageGenerationConfig>;
 }): GenerationPlan {
-  const config: ImageGenerationConfig = {
+  const config: SimplifiedImageGenerationConfig = {
     ...defaultConfig,
-    ...input.config,
-    types: {
-      ...defaultConfig.types,
-      ...input.config?.types
-    }
+    ...input.config
   };
 
   const tasks: GenerationTask[] = [];
   const sharedImageSlots: string[] = [];
+  const filteredVariantAsins = input.variantAsins.filter(
+    (variantAsin) => variantAsin && variantAsin !== input.mainAsin
+  );
 
-  const mainGrouped = groupImagesByType(input.mainImages);
   const mainTask: GenerationTask = {
     asin: input.mainAsin,
     isMain: true,
     images: []
   };
 
-  const enabledTypes: ImageType[] = ["primary", "dimension", "selling_point", "lifestyle", "other"];
-
-  for (const type of enabledTypes) {
-    const typeConfig = config.types[type];
-    if (!typeConfig.enabled) {
-      continue;
-    }
-
-    const sourceImages = mainGrouped[type];
-    if (sourceImages.length === 0) {
-      continue;
-    }
-
-    const candidateCount = getCandidateCount(type, config);
-    const sourceImage = sourceImages[0];
-
-    for (let i = 0; i < candidateCount; i++) {
-      mainTask.images.push({
-        sourceUrl: sourceImage.url,
-        sourcePath: sourceImage.localPath,
-        type,
-        candidateCount: 1,
-        promptTemplate: getPromptForCandidate(type, i)
-      });
-    }
-
-    if (type !== "primary") {
-      sharedImageSlots.push(`${input.mainAsin}:${type}`);
-    }
+  for (let i = 0; i < config.primaryImageCandidateCount; i++) {
+    mainTask.images.push({
+      sourceUrl: input.mainPrimaryImage.url,
+      sourcePath: input.mainPrimaryImage.localPath,
+      type: "primary",
+      candidateCount: 1,
+      promptTemplate: PRIMARY_PROMPT,
+      variantId: `primary-${i + 1}`
+    });
   }
 
-  if (mainTask.images.length > config.maxImagesPerProduct) {
-    mainTask.images = mainTask.images.slice(0, config.maxImagesPerProduct);
+  let otherIndex = 0;
+  for (const otherImage of input.mainOtherImages) {
+    if (mainTask.images.length >= config.maxImagesPerProduct) {
+      break;
+    }
+    otherIndex += 1;
+    mainTask.images.push({
+      sourceUrl: otherImage.url,
+      sourcePath: otherImage.localPath,
+      type: "other",
+      candidateCount: 1,
+      promptTemplate: NON_PRIMARY_PROMPT,
+      variantId: `other-${otherIndex}`
+    });
+    sharedImageSlots.push(`${input.mainAsin}:other:${otherImage.url}`);
   }
 
   tasks.push(mainTask);
 
-  for (const variantAsin of input.variantAsins) {
-    const variantImagesArray = input.variantImages.get(variantAsin) ?? [];
-    const variantGrouped = groupImagesByType(variantImagesArray);
+  for (const variantAsin of filteredVariantAsins) {
+    const variantPrimary = input.variantPrimaryImages.get(variantAsin);
+    if (!variantPrimary) continue;
 
     const variantTask: GenerationTask = {
       asin: variantAsin,
@@ -155,23 +108,15 @@ export function createGenerationPlan(input: {
       images: []
     };
 
-    const primaryConfig = config.types.primary;
-    if (primaryConfig.enabled) {
-      const primaryImages = variantGrouped.primary;
-      if (primaryImages.length > 0) {
-        const sourceImage = primaryImages[0];
-        const candidateCount = getCandidateCount("primary", config);
-
-        for (let i = 0; i < candidateCount; i++) {
-          variantTask.images.push({
-            sourceUrl: sourceImage.url,
-            sourcePath: sourceImage.localPath,
-            type: "primary",
-            candidateCount: 1,
-            promptTemplate: getPromptForCandidate("primary", i)
-          });
-        }
-      }
+    for (let i = 0; i < config.primaryImageCandidateCount; i++) {
+      variantTask.images.push({
+        sourceUrl: variantPrimary.url,
+        sourcePath: variantPrimary.localPath,
+        type: "primary",
+        candidateCount: 1,
+        promptTemplate: PRIMARY_PROMPT,
+        variantId: `primary-${i + 1}`
+      });
     }
 
     if (variantTask.images.length > 0) {
@@ -181,7 +126,7 @@ export function createGenerationPlan(input: {
 
   return {
     mainAsin: input.mainAsin,
-    variantAsins: input.variantAsins,
+    variantAsins: filteredVariantAsins,
     tasks,
     sharedImageSlots,
     config
@@ -218,5 +163,5 @@ export function getSharedImagesForVariant(
   }
 
   const mainGenerated = generatedImages.get(plan.mainAsin) ?? [];
-  return mainGenerated.filter((img) => img.type !== "primary");
+  return mainGenerated.filter((img) => img.type === "other");
 }

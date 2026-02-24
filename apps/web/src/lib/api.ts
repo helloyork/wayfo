@@ -1,5 +1,16 @@
-export const apiBase =
-  process.env.NEXT_PUBLIC_API_BASE ?? "http://localhost:4000";
+const resolvedApiBase = () => {
+  if (process.env.NEXT_PUBLIC_API_BASE) {
+    return process.env.NEXT_PUBLIC_API_BASE;
+  }
+
+  if (typeof window !== "undefined") {
+    return `${window.location.protocol}//${window.location.hostname}:4000`;
+  }
+
+  return "http://localhost:4000";
+};
+
+export const apiBase = resolvedApiBase();
 
 export async function fetchJson<T>(path: string, init?: RequestInit) {
   const res = await fetch(`${apiBase}${path}`, {

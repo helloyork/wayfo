@@ -9,7 +9,7 @@ import {
 import { getR2Settings } from "../store/settingsStore";
 import { getImagePool } from "../pools/registry";
 import { log } from "../logger";
-import type { ImageType } from "./classifier";
+import type { ImageType } from "./planner";
 
 export type UploadedImage = {
   localPath: string;
@@ -250,10 +250,17 @@ export function buildImageUrlsForSubmit(input: {
       urls.push(img.publicUrl);
     }
   } else {
-    const mainImages = input.uploadedImages.get(input.mainAsin) ?? [];
-    const sharedFromMain = mainImages.filter((img) => img.type !== "primary");
-    for (const img of sharedFromMain) {
-      urls.push(img.publicUrl);
+    const sharedFromVariant = asinImages.filter((img) => img.type !== "primary");
+    if (sharedFromVariant.length > 0) {
+      for (const img of sharedFromVariant) {
+        urls.push(img.publicUrl);
+      }
+    } else {
+      const mainImages = input.uploadedImages.get(input.mainAsin) ?? [];
+      const sharedFromMain = mainImages.filter((img) => img.type !== "primary");
+      for (const img of sharedFromMain) {
+        urls.push(img.publicUrl);
+      }
     }
   }
 

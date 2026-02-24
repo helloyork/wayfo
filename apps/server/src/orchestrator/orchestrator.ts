@@ -52,7 +52,8 @@ import {
 } from "../core/wayfair/discovery";
 import { flattenQuestions, normalizeAnswersForPart } from "../core/wayfair/answerRules";
 import { submitWayfairProductAdditions, fetchWayfairSubmissions } from "../core/wayfair/productAddition";
-import { buildWayfairSubmitRequest } from "../core/wayfair/submitBuilder";
+import { buildWayfairSubmitRequest, buildWayfairBatchSubmitRequest, type VariantBatchInput, type RewrittenContentInput } from "../core/wayfair/submitBuilder";
+import { rewriteProductContent, type RewrittenContent } from "../core/wayfair/contentRewriter";
 import { reduceWayfairFlaws } from "../core/wayfair/flawReducer";
 import { repairFlawsWithAgent, type FlawAgentResult } from "../core/wayfair/flawAgent";
 import { dataRoot, runsRoot, ensureDir } from "../core/paths";
@@ -61,13 +62,14 @@ import {
   scrapeAmazonProduct
 } from "../connectors/hasdata";
 import { downloadProductImages } from "../core/images/downloadPool";
-import { generateImages, type GeneratedImage } from "../core/images/generator";
+import { generateImages, generateImagesForPlan, type GeneratedImage } from "../core/images/generator";
 import {
   buildImageUrlsForSubmit,
   configureR2LifecycleRules,
   uploadImagesToR2,
   type UploadedImage
 } from "../core/images/r2Uploader";
+import { createSimpleGenerationPlan, type GenerationPlan, type SimpleImageInput, type ImageType } from "../core/images/planner";
 
 const steps: Step[] = [
   "SCRAPE_AMAZON",
@@ -81,7 +83,7 @@ const steps: Step[] = [
 const wayfairClassifySchemaVersion = "v1";
 const wayfairDiscoverySchemaVersion = "v1";
 const imageGenerateSchemaVersion = "v1";
-const imageUploadSchemaVersion = "v1";
+const imageUploadSchemaVersion = "v3";
 const wayfairSubmitSchemaVersion = "v2";
 const wayfairPollSchemaVersion = "v1";
 
@@ -102,6 +104,25 @@ function sanitizeWayfairRequestAnswers(
           answers: normalized.answers
         };
       })
+    }))
+  };
+}
+
+function ensureManufacturerIdForSubmit(
+  request: WayfairSubmitProductAdditionsRequest,
+  manufacturerId?: string | null
+) {
+  if (!manufacturerId) {
+    return request;
+  }
+  return {
+    ...request,
+    proposedProductAdditions: request.proposedProductAdditions.map((addition) => ({
+      ...addition,
+      parts: addition.parts.map((part) => ({
+        ...part,
+        manufacturerId: part.manufacturerId ?? manufacturerId
+      }))
     }))
   };
 }
@@ -154,9 +175,61 @@ export async function startRun(run: Run) {
     id: nanoid(),
     type: "RUN_COMPLETED",
     runId: completed.id,
+    data: { status: completed.status, currentStep: completed.currentStep ?? undefined },
     timestamp: new Date().toISOString()
   });
   log({ level: "info", runId: run.id, message: "Run completed" });
+}
+
+export async function resumeRun(runId: string) {
+  const run = getRun(runId);
+  if (!run) {
+    throw new Error("Run not found");
+  }
+
+  if (run.status !== "NEEDS_REVIEW" && run.status !== "PAUSED") {
+    throw new Error(`Cannot resume run with status ${run.status}`);
+  }
+
+  const currentStep = run.currentStep;
+  const startIndex = currentStep ? steps.indexOf(currentStep) : 0;
+
+  if (startIndex === -1) {
+    throw new Error(`Unknown step: ${currentStep}`);
+  }
+
+  const updated = updateRun(run.id, { status: "RUNNING" });
+  emit({
+    id: nanoid(),
+    type: "RUN_PROGRESS",
+    runId: updated.id,
+    message: `Run resumed from step ${currentStep ?? steps[0]}`,
+    data: { status: updated.status, step: currentStep },
+    timestamp: new Date().toISOString()
+  });
+  log({ level: "info", runId: run.id, message: `Run resumed from step ${currentStep}` });
+
+  for (let i = startIndex; i < steps.length; i++) {
+    const step = steps[i];
+    await runStep(updated, step);
+    const refreshed = updateRun(updated.id, {});
+    if (refreshed.status === "NEEDS_REVIEW") {
+      return;
+    }
+  }
+
+  const completed = updateRun(run.id, {
+    status: "COMPLETED",
+    currentStep: undefined
+  });
+  emit({
+    id: nanoid(),
+    type: "RUN_COMPLETED",
+    runId: completed.id,
+    data: { status: completed.status, currentStep: completed.currentStep ?? undefined },
+    timestamp: new Date().toISOString()
+  });
+  log({ level: "info", runId: run.id, message: "Run completed (resumed)" });
 }
 
 export async function resumeWayfairAfterReview(
@@ -172,17 +245,19 @@ export async function resumeWayfairAfterReview(
     markNeedsReview(run.id, "缺少 Wayfair 凭据，无法提交。");
     return;
   }
-  updateRun(run.id, { status: "RUNNING", currentStep: "WAYFAIR_SUBMIT" });
+  const updated = updateRun(run.id, { status: "RUNNING", currentStep: "WAYFAIR_SUBMIT" });
   emit({
     id: nanoid(),
     type: "RUN_PROGRESS",
     runId: run.id,
     message: "人工修正已提交，继续执行 Wayfair 提交",
+    data: { status: updated.status, currentStep: updated.currentStep ?? "WAYFAIR_SUBMIT" },
     timestamp: new Date().toISOString()
   });
 
+  const requestForSubmit = ensureManufacturerIdForSubmit(request, run.manufacturerId);
   const inputHash = hashInput({
-    request,
+    request: requestForSubmit,
     schemaVersion: wayfairSubmitSchemaVersion,
     mode: "review"
   });
@@ -213,7 +288,7 @@ export async function resumeWayfairAfterReview(
       jobId: job.id,
       type: "wayfair/submit/request",
       relativePath: "wayfair/submit/request.json",
-      content: request
+      content: requestForSubmit
     });
     const submitResponse = await submitWayfairProductAdditions({
       credentials: {
@@ -222,7 +297,7 @@ export async function resumeWayfairAfterReview(
         clientSecret: settings.clientSecret,
         audience: settings.audience
       },
-      request
+      request: requestForSubmit
     });
     createArtifact({
       runId: run.id,
@@ -241,7 +316,11 @@ export async function resumeWayfairAfterReview(
       message: "Wayfair submit 已提交（人工修正）",
       timestamp: new Date().toISOString()
     });
-    await runWayfairPoll(run);
+    await runWayfairPoll(run, {
+      skipAgentRepair: true,
+      skipAutoRepair: true,
+      completeRunOnSuccess: true
+    });
   } catch (error) {
     updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
     markNeedsReview(
@@ -366,7 +445,7 @@ async function runStep(run: Run, step: Step) {
     return;
   }
   if (step === "WAYFAIR_POLL") {
-    await runWayfairPoll(run);
+    await runWayfairPoll(run, { skipAgentRepair: true });
     return;
   }
 }
@@ -894,14 +973,22 @@ async function runWayfairDiscovery(run: Run) {
 function readGeneratedImagesArtifact(runId: string) {
   return readJsonArtifact<{
     results: Record<string, GeneratedImage[]>;
+    plan?: {
+      mainAsin: string;
+      variantAsins: string[];
+      sharedImageSlots: string[];
+    };
     totalCost: number;
+    errors?: Array<{ asin: string; sourceUrl: string; error: string }>;
   }>(runId, "images/generated.json");
 }
 
 function readUploadedImagesArtifact(runId: string) {
   return readJsonArtifact<{
     uploaded: Record<string, UploadedImage[]>;
+    mainAsin?: string;
     totalSize: number;
+    errors?: Array<{ asin: string; localPath: string; error: string }>;
   }>(runId, "images/uploaded.json");
 }
 
@@ -916,13 +1003,6 @@ function resolveLocalImagePath(runId: string, asin: string, url: string): string
   }
   return path.join(getRunImagesDir(runId, asin), item.fileName);
 }
-
-const primaryPrompts = [
-  "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: front view.",
-  "Rerender this product image with a clean light gray studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: 45-degree side view.",
-  "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: side view.",
-  "Rerender this product image with a clean white studio background. Maintain the exact product structure, materials, colors, and proportions. Use soft professional lighting with natural shadows. Do not add text, logos, watermarks, or additional objects. Camera angle: top-down view."
-];
 
 function getPrimaryCandidateCount() {
   const settings = getAppSettings();
@@ -968,9 +1048,12 @@ async function runImageGenerate(run: Run) {
     return;
   }
 
-  const variantAsins = run.enumerateVariants
-    ? (snapshot.variants.map((v) => v.asin).filter(Boolean) ?? [])
+  const rawVariantAsins = run.enumerateVariants
+    ? (snapshot.variants?.map((v) => v.asin).filter(Boolean) ?? [])
     : [];
+  const variantAsins = Array.from(
+    new Set(rawVariantAsins.filter((variantAsin) => variantAsin !== asin))
+  );
 
   const inputHash = hashInput({
     mainAsin: asin,
@@ -1021,34 +1104,55 @@ async function runImageGenerate(run: Run) {
     ensureDir(outputBaseDir);
 
     const primaryCandidateCount = getPrimaryCandidateCount();
-    const tasks: Array<{
-      asin: string;
-      sourceUrl: string;
-      sourcePath: string;
-    }> = [];
 
-    for (let i = 0; i < primaryCandidateCount; i += 1) {
-      tasks.push({ asin, sourceUrl: primaryUrl, sourcePath: primaryLocalPath });
+    const mainPrimaryImage: SimpleImageInput = {
+      url: primaryUrl,
+      localPath: primaryLocalPath,
+      isPrimary: true
+    };
+
+    const mainOtherImages: SimpleImageInput[] = [];
+    const seenUrls = new Set<string>([primaryUrl]);
+
+    for (const url of [...snapshot.images.all, ...snapshot.images.description]) {
+      if (!url || seenUrls.has(url)) continue;
+      seenUrls.add(url);
+      const localPath = resolveLocalImagePath(run.id, asin, url);
+      if (localPath) {
+        mainOtherImages.push({ url, localPath, isPrimary: false });
+      }
     }
 
+    const variantPrimaryImages = new Map<string, SimpleImageInput>();
     for (const variantAsin of variantAsins) {
       const variantSnapshot = readRunCache(run.id, variantAsin)?.product;
-      const variantPrimaryUrl = variantSnapshot?.images.primary ?? variantSnapshot?.images.all[0];
-      if (!variantPrimaryUrl) {
-        continue;
-      }
-      const variantPrimaryPath = resolveLocalImagePath(run.id, variantAsin, variantPrimaryUrl);
-      if (!variantPrimaryPath) {
-        continue;
-      }
-      for (let i = 0; i < primaryCandidateCount; i += 1) {
-        tasks.push({
-          asin: variantAsin,
-          sourceUrl: variantPrimaryUrl,
-          sourcePath: variantPrimaryPath
-        });
-      }
+      if (!variantSnapshot) continue;
+
+      const variantPrimary = variantSnapshot.images.primary ?? variantSnapshot.images.all[0];
+      if (!variantPrimary) continue;
+
+      const variantPrimaryPath = resolveLocalImagePath(run.id, variantAsin, variantPrimary);
+      if (!variantPrimaryPath) continue;
+
+      variantPrimaryImages.set(variantAsin, {
+        url: variantPrimary,
+        localPath: variantPrimaryPath,
+        isPrimary: true
+      });
     }
+
+    const plan = createSimpleGenerationPlan({
+      mainAsin: asin,
+      mainPrimaryImage,
+      mainOtherImages,
+      variantAsins,
+      variantPrimaryImages,
+      config: {
+        primaryImageCandidateCount: primaryCandidateCount
+      }
+    });
+
+    const totalTaskCount = plan.tasks.reduce((sum, t) => sum + t.images.length, 0);
 
     emit({
       id: nanoid(),
@@ -1056,44 +1160,23 @@ async function runImageGenerate(run: Run) {
       runId: run.id,
       jobId: job.id,
       step: "IMAGE_GENERATE",
-      message: `开始生成主图，共 ${tasks.length} 张`,
+      message: `开始生成图片，共 ${totalTaskCount} 张（主产品 ${mainOtherImages.length + 1} 张 + 变体主图）`,
       timestamp: new Date().toISOString()
     });
 
+    const generateResult = await generateImagesForPlan({
+      runId: run.id,
+      plan,
+      outputBaseDir
+    });
+
     const resultsObj: Record<string, GeneratedImage[]> = {};
-    let totalCost = 0;
-    const errors: Array<{ asin: string; sourceUrl: string; error: string }> = [];
-
-    for (let i = 0; i < tasks.length; i += 1) {
-      const task = tasks[i];
-      const asinOutputDir = path.join(outputBaseDir, task.asin);
-      ensureDir(asinOutputDir);
-      const prompt = primaryPrompts[i % primaryPrompts.length];
-
-      const result = await generateImages({
-        runId: run.id,
-        asin: task.asin,
-        tasks: [
-          {
-            sourceUrl: task.sourceUrl,
-            sourcePath: task.sourcePath,
-            type: "primary",
-            prompt,
-            quality: "high"
-          }
-        ],
-        outputDir: asinOutputDir
-      });
-
-      resultsObj[task.asin] = [...(resultsObj[task.asin] ?? []), ...result.images];
-      totalCost += result.totalCost;
-      for (const error of result.errors) {
-        errors.push({ asin: task.asin, ...error });
-      }
+    for (const [resultAsin, images] of generateResult.results) {
+      resultsObj[resultAsin] = images;
     }
 
     if (!resultsObj[asin] || resultsObj[asin].length === 0) {
-      markNeedsReview(run.id, "主产品主图生成失败，无法继续提交。");
+      markNeedsReview(run.id, "主产品图片生成失败，无法继续提交。");
       return;
     }
 
@@ -1104,8 +1187,13 @@ async function runImageGenerate(run: Run) {
       relativePath: "images/generated.json",
       content: {
         results: resultsObj,
-        totalCost,
-        errors
+        plan: {
+          mainAsin: plan.mainAsin,
+          variantAsins: plan.variantAsins,
+          sharedImageSlots: plan.sharedImageSlots
+        },
+        totalCost: generateResult.totalCost,
+        errors: generateResult.errors
       }
     });
 
@@ -1116,7 +1204,7 @@ async function runImageGenerate(run: Run) {
       runId: run.id,
       jobId: job.id,
       step: "IMAGE_GENERATE",
-      message: `主图生成完成，成本 $${totalCost.toFixed(3)}`,
+      message: `图片生成完成，成本 $${generateResult.totalCost.toFixed(3)}`,
       timestamp: new Date().toISOString()
     });
 
@@ -1125,11 +1213,12 @@ async function runImageGenerate(run: Run) {
       runId: run.id,
       jobId: job.id,
       step: "IMAGE_GENERATE",
-      message: "Primary image generation completed",
+      message: "Image generation completed with classification and planning",
       err: {
         totalImages: Object.values(resultsObj).flat().length,
-        totalCost,
-        errorCount: errors.length
+        totalCost: generateResult.totalCost,
+        errorCount: generateResult.errors.length,
+        sharedSlots: plan.sharedImageSlots.length
       }
     });
   } catch (error) {
@@ -1223,60 +1312,69 @@ async function runImageUpload(run: Run) {
       runId: run.id,
       jobId: job.id,
       step: "IMAGE_UPLOAD",
-      message: "开始上传图片到 R2",
+      message: "开始上传重绘后的图片到 R2",
       timestamp: new Date().toISOString()
     });
 
     await configureR2LifecycleRules(r2Settings.lifecycleDays ?? 7);
 
-    const mainAsin = extractAsin(run.amazonUrl);
+    const mainAsin = generatedArtifact.plan?.mainAsin ?? extractAsin(run.amazonUrl);
     if (!mainAsin) {
-      markNeedsReview(run.id, "无法从链接中解析 ASIN，无法上传图片。");
+      markNeedsReview(run.id, "无法确定主产品 ASIN，无法上传图片。");
       return;
     }
-    const mainSnapshot = readRunCache(run.id, mainAsin)?.product;
-    if (!mainSnapshot) {
-      markNeedsReview(run.id, "缺少产品快照，无法上传图片。");
-      return;
-    }
-
-    const primaryUrl = mainSnapshot.images.primary ?? mainSnapshot.images.all[0];
-    const otherImageUrls = new Set<string>();
-    mainSnapshot.images.all.forEach((url) => {
-      if (url && url !== primaryUrl) {
-        otherImageUrls.add(url);
-      }
-    });
-    mainSnapshot.images.description.forEach((url) => {
-      if (url && url !== primaryUrl) {
-        otherImageUrls.add(url);
-      }
-    });
 
     const uploadTargets = new Map<string, Array<{ localPath: string; type: "primary" | "other" }>>();
+    const preflightErrors: Array<{ asin: string; localPath: string; error: string }> = [];
+    const generatedBaseDir = path.resolve(runsRoot, run.id, "artifacts", "images", "generated");
+    const ensureGeneratedPath = (asin: string, localPath: string) => {
+      const resolved = path.resolve(localPath);
+      if (!resolved.startsWith(`${generatedBaseDir}${path.sep}`)) {
+        preflightErrors.push({
+          asin,
+          localPath,
+          error: "Upload skipped: not a generated image path"
+        });
+        return false;
+      }
+      return true;
+    };
+    const mainGeneratedImages = generatedArtifact.results[mainAsin] ?? [];
+    const sharedFromMain = mainGeneratedImages
+      .filter((img) => img.type !== "primary")
+      .map((img) => ({
+        localPath: img.generatedPath,
+        type: "other" as const
+      }))
+      .filter((img) => ensureGeneratedPath(mainAsin, img.localPath));
 
     for (const [asin, images] of Object.entries(generatedArtifact.results)) {
-      const generated = images.map((img) => ({
-        localPath: img.generatedPath,
-        type: "primary" as const
-      }));
-      uploadTargets.set(asin, generated);
-    }
+      const isMainAsin = asin === mainAsin;
+      const generated = images
+        .map((img) => ({
+          localPath: img.generatedPath,
+          type: (img.type === "primary" ? "primary" : "other") as "primary" | "other"
+        }))
+        .filter((img) => ensureGeneratedPath(asin, img.localPath));
 
-    const mainOthers: Array<{ localPath: string; type: "other" }> = [];
-    for (const url of otherImageUrls) {
-      const localPath = resolveLocalImagePath(run.id, mainAsin, url);
-      if (localPath) {
-        mainOthers.push({ localPath, type: "other" });
+      if (isMainAsin) {
+        uploadTargets.set(asin, generated);
+      } else {
+        const primaryOnly = generated.filter((g) => g.type === "primary");
+        const combined = [...primaryOnly, ...sharedFromMain];
+        const deduped = new Map<string, { localPath: string; type: "primary" | "other" }>();
+        for (const image of combined) {
+          if (!deduped.has(image.localPath)) {
+            deduped.set(image.localPath, image);
+          }
+        }
+        uploadTargets.set(asin, Array.from(deduped.values()));
       }
     }
-
-    const existingMainTargets = uploadTargets.get(mainAsin) ?? [];
-    uploadTargets.set(mainAsin, [...existingMainTargets, ...mainOthers]);
 
     const uploadedObj: Record<string, UploadedImage[]> = {};
     let totalSize = 0;
-    const errors: Array<{ asin: string; localPath: string; error: string }> = [];
+    const errors: Array<{ asin: string; localPath: string; error: string }> = [...preflightErrors];
 
     for (const [asin, images] of uploadTargets) {
       if (images.length === 0) {
@@ -1301,6 +1399,7 @@ async function runImageUpload(run: Run) {
       relativePath: "images/uploaded.json",
       content: {
         uploaded: uploadedObj,
+        mainAsin,
         totalSize,
         errors
       }
@@ -1419,33 +1518,179 @@ async function runWayfairSubmit(run: Run) {
 
   try {
     const uploadedArtifact = readUploadedImagesArtifact(run.id);
-    let uploadedImageUrls: string[] | null = null;
+    const generatedArtifact = readGeneratedImagesArtifact(run.id);
+    const uploadedImagesMap = uploadedArtifact
+      ? new Map(Object.entries(uploadedArtifact.uploaded))
+      : new Map<string, UploadedImage[]>();
 
-    if (uploadedArtifact && asin) {
-      const candidateUrls = buildImageUrlsForSubmit({
-        mainAsin: asin,
-        asin,
-        uploadedImages: new Map(Object.entries(uploadedArtifact.uploaded)),
-        isMain: true
+    const mainAsin = uploadedArtifact?.mainAsin ?? generatedArtifact?.plan?.mainAsin ?? asin;
+    const variantAsins = run.enumerateVariants
+      ? (generatedArtifact?.plan?.variantAsins ?? snapshot.variants?.map((v) => v.asin).filter(Boolean) ?? [])
+      : [];
+
+    const hasVariants = variantAsins.length > 0 && run.enumerateVariants;
+
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: "正在重写产品描述和 bullet points...",
+      timestamp: new Date().toISOString()
+    });
+
+    const rewrittenContents = new Map<string, RewrittenContentInput>();
+
+    const mainRewriteResult = await rewriteProductContent({
+      runId: run.id,
+      snapshot
+    });
+    if (mainRewriteResult.success && mainRewriteResult.content) {
+      rewrittenContents.set(mainAsin!, {
+        productName: mainRewriteResult.content.productName,
+        description: mainRewriteResult.content.description,
+        bullets: mainRewriteResult.content.bullets
       });
-      if (candidateUrls.length > 0) {
-        uploadedImageUrls = candidateUrls;
+    }
+
+    if (hasVariants) {
+      for (const variantAsin of variantAsins) {
+        if (variantAsin === mainAsin) continue;
+        const variantSnapshot = readRunCache(run.id, variantAsin)?.product;
+        if (!variantSnapshot) continue;
+
+        const variantRewriteResult = await rewriteProductContent({
+          runId: run.id,
+          snapshot: variantSnapshot
+        });
+        if (variantRewriteResult.success && variantRewriteResult.content) {
+          rewrittenContents.set(variantAsin, {
+            productName: variantRewriteResult.content.productName,
+            description: variantRewriteResult.content.description,
+            bullets: variantRewriteResult.content.bullets
+          });
+        }
       }
     }
 
-    const built = await buildWayfairSubmitRequest({
-      snapshot,
-      classId,
-      marketContext,
-      supplierId: settings.supplierId,
-      questions,
-      brandAssociations,
-      mediaMetaDataTags: mediaTags,
-      manufacturerId: run.manufacturerId,
-      uploadedImageUrls
+    createArtifact({
+      runId: run.id,
+      jobId: job.id,
+      type: "wayfair/submit/rewritten",
+      relativePath: "wayfair/submit/rewritten.json",
+      content: Object.fromEntries(rewrittenContents)
     });
-    const request = sanitizeWayfairRequestAnswers(built.request, questions);
-    const { answerResult, selected } = built;
+
+    emit({
+      id: nanoid(),
+      type: "JOB_PROGRESS",
+      runId: run.id,
+      jobId: job.id,
+      step: "WAYFAIR_SUBMIT",
+      message: `内容重写完成，共 ${rewrittenContents.size} 个产品`,
+      timestamp: new Date().toISOString()
+    });
+
+    let request: WayfairSubmitProductAdditionsRequest;
+    let answerResultsForArtifact: unknown;
+    let selectedForArtifact: unknown;
+
+    if (hasVariants) {
+      const variants: VariantBatchInput[] = [];
+
+      const mainImageUrls = buildImageUrlsForSubmit({
+        mainAsin: mainAsin!,
+        asin: mainAsin!,
+        uploadedImages: uploadedImagesMap,
+        isMain: true
+      });
+      variants.push({
+        asin: mainAsin!,
+        snapshot,
+        imageUrls: mainImageUrls,
+        isMain: true,
+        rewrittenContent: rewrittenContents.get(mainAsin!) ?? null
+      });
+
+      for (const variantAsin of variantAsins) {
+        if (variantAsin === mainAsin) continue;
+        const variantSnapshot = readRunCache(run.id, variantAsin)?.product;
+        if (!variantSnapshot) continue;
+
+        const variantImageUrls = buildImageUrlsForSubmit({
+          mainAsin: mainAsin!,
+          asin: variantAsin,
+          uploadedImages: uploadedImagesMap,
+          isMain: false
+        });
+
+        variants.push({
+          asin: variantAsin,
+          snapshot: variantSnapshot,
+          imageUrls: variantImageUrls,
+          isMain: false,
+          rewrittenContent: rewrittenContents.get(variantAsin) ?? null
+        });
+      }
+
+      emit({
+        id: nanoid(),
+        type: "JOB_PROGRESS",
+        runId: run.id,
+        jobId: job.id,
+        step: "WAYFAIR_SUBMIT",
+        message: `构建变体批次提交请求，共 ${variants.length} 个产品（主产品为 Primary Variety）`,
+        timestamp: new Date().toISOString()
+      });
+
+      const batchBuilt = await buildWayfairBatchSubmitRequest({
+        variants,
+        classId,
+        marketContext,
+        supplierId: settings.supplierId,
+        questions,
+        brandAssociations,
+        mediaMetaDataTags: mediaTags,
+        manufacturerId: run.manufacturerId
+      });
+
+      request = sanitizeWayfairRequestAnswers(batchBuilt.request, questions);
+      answerResultsForArtifact = Object.fromEntries(batchBuilt.answerResults);
+      selectedForArtifact = batchBuilt.selected;
+    } else {
+      let uploadedImageUrls: string[] | null = null;
+      if (mainAsin) {
+        const candidateUrls = buildImageUrlsForSubmit({
+          mainAsin,
+          asin: mainAsin,
+          uploadedImages: uploadedImagesMap,
+          isMain: true
+        });
+        if (candidateUrls.length > 0) {
+          uploadedImageUrls = candidateUrls;
+        }
+      }
+
+      const built = await buildWayfairSubmitRequest({
+        snapshot,
+        classId,
+        marketContext,
+        supplierId: settings.supplierId,
+        questions,
+        brandAssociations,
+        mediaMetaDataTags: mediaTags,
+        manufacturerId: run.manufacturerId,
+        uploadedImageUrls,
+        rewrittenContent: rewrittenContents.get(mainAsin!) ?? null
+      });
+
+      request = sanitizeWayfairRequestAnswers(built.request, questions);
+      answerResultsForArtifact = built.answerResult;
+      selectedForArtifact = built.selected;
+    }
+    request = ensureManufacturerIdForSubmit(request, run.manufacturerId);
+
     const partCount = request.proposedProductAdditions.reduce(
       (count, addition) => count + addition.parts.length,
       0
@@ -1467,10 +1712,7 @@ async function runWayfairSubmit(run: Run) {
         classId,
         partCount,
         answersCount,
-        manufacturerId: selected.manufacturerId,
-        supplierPartNumber: selected.supplierPartNumber,
-        imageUrls: selected.imageUrls,
-        usedUploadedImages: selected.usedUploadedImages
+        hasVariants
       }
     });
     createArtifact({
@@ -1485,14 +1727,14 @@ async function runWayfairSubmit(run: Run) {
       jobId: job.id,
       type: "wayfair/submit/answers",
       relativePath: "wayfair/submit/answers.json",
-      content: answerResult
+      content: answerResultsForArtifact
     });
     createArtifact({
       runId: run.id,
       jobId: job.id,
       type: "wayfair/submit/selection",
       relativePath: "wayfair/submit/selection.json",
-      content: selected
+      content: selectedForArtifact
     });
 
     const submitResponse = await submitWayfairProductAdditions({
@@ -1528,7 +1770,7 @@ async function runWayfairSubmit(run: Run) {
       runId: run.id,
       jobId: job.id,
       step: "WAYFAIR_SUBMIT",
-      message: "Wayfair submit 已提交",
+      message: `Wayfair submit 已提交，共 ${partCount} 个产品`,
       timestamp: new Date().toISOString()
     });
   } catch (error) {
@@ -1546,7 +1788,10 @@ async function runWayfairSubmit(run: Run) {
   }
 }
 
-async function runWayfairPoll(run: Run) {
+async function runWayfairPoll(
+  run: Run,
+  options?: { skipAgentRepair?: boolean; skipAutoRepair?: boolean; completeRunOnSuccess?: boolean }
+) {
   updateRun(run.id, { currentStep: "WAYFAIR_POLL" });
   const settings = getWayfairActiveSettings();
   if (!settings) {
@@ -1630,6 +1875,9 @@ async function runWayfairPoll(run: Run) {
       );
       const allSubmitted = submissions.length > 0 && submissions.every((item) => item.status === "SUBMITTED");
       if (hasFailed) {
+        if (options?.skipAutoRepair) {
+          break;
+        }
         if (!repaired) {
           const request = readSubmitRequest(run.id);
           const questions = readQuestionsArtifact(run.id);
@@ -1647,7 +1895,7 @@ async function runWayfairPoll(run: Run) {
             let agentResults: FlawAgentResult[] = [];
             let agentAppliedCount = 0;
 
-            if (reduced.summary.unrepairableFlaws > 0 && snapshot) {
+            if (!options?.skipAgentRepair && reduced.summary.unrepairableFlaws > 0 && snapshot) {
               const unrepairedFlaws = reduced.suggestions
                 .filter((s) => !s.repairable && s.questionId !== "media::imageValue")
                 .map((s) => {
@@ -1802,6 +2050,20 @@ async function runWayfairPoll(run: Run) {
       message: "Wayfair submissions 状态已更新",
       timestamp: new Date().toISOString()
     });
+    if (options?.completeRunOnSuccess) {
+      const completed = updateRun(run.id, {
+        status: "COMPLETED",
+        currentStep: undefined
+      });
+      emit({
+        id: nanoid(),
+        type: "RUN_COMPLETED",
+        runId: completed.id,
+        data: { status: completed.status, currentStep: completed.currentStep ?? undefined },
+        timestamp: new Date().toISOString()
+      });
+      log({ level: "info", runId: run.id, message: "Run completed (review submit)" });
+    }
   } catch (error) {
     updateJob(run.id, job.id, { status: "FAILED", errorSummary: String(error) });
     markNeedsReview(run.id, error instanceof Error ? error.message : "Wayfair poll 失败");
@@ -1898,13 +2160,17 @@ function markNeedsReview(
   suggestion?: string,
   status: "NEEDS_REVIEW" | "WAITING_FOR_REVIEW" = "NEEDS_REVIEW"
 ) {
-  updateRun(runId, { status });
+  const updated = updateRun(runId, { status });
   emit({
     id: nanoid(),
     type: status === "WAITING_FOR_REVIEW" ? "WAITING_FOR_REVIEW" : "NEEDS_REVIEW",
     runId,
     message,
-    data: suggestion ? { suggestion } : undefined,
+    data: {
+      status: updated.status,
+      currentStep: updated.currentStep ?? undefined,
+      ...(suggestion ? { suggestion } : {})
+    },
     timestamp: new Date().toISOString()
   });
   log({

@@ -27,6 +27,10 @@ a {
   padding: 20px 24px;
 }
 
+.card-success {
+  border-color: #22c55e;
+}
+
 .stack {
   display: grid;
   gap: 20px;
@@ -80,11 +84,43 @@ a {
   cursor: not-allowed;
 }
 
+.spinner {
+  display: inline-block;
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.5);
+  border-top-color: #ffffff;
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  vertical-align: middle;
+  margin-right: 6px;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .input {
   flex: 1;
   padding: 8px 10px;
   border: 1px solid #cbd5f5;
   border-radius: 4px;
+}
+
+.input-offset {
+  margin-left: 8px;
+}
+
+.input-error {
+  border-color: #ef4444;
+}
+
+.review-input {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
 }
 
 .textarea {

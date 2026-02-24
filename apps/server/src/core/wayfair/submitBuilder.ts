@@ -64,6 +64,12 @@ function sanitizeAnswers(
     }));
 }
 
+export type RewrittenContentInput = {
+  productName?: string;
+  description?: string;
+  bullets?: string[];
+};
+
 export async function buildWayfairSubmitRequest(input: {
   snapshot: AmazonProductSnapshot;
   classId: number;
@@ -74,6 +80,7 @@ export async function buildWayfairSubmitRequest(input: {
   mediaMetaDataTags: WayfairMediaMetaDataTagSet[];
   manufacturerId?: string | null;
   uploadedImageUrls?: string[] | null;
+  rewrittenContent?: RewrittenContentInput | null;
 }) {
   const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
@@ -87,6 +94,10 @@ export async function buildWayfairSubmitRequest(input: {
   if (imageUrls.length === 0) {
     throw new Error("缺少可用图片 URL，无法提交 Wayfair");
   }
+
+  const productName = input.rewrittenContent?.productName ?? input.snapshot.title;
+  const featureBullets = input.rewrittenContent?.bullets?.slice(0, 6) ?? input.snapshot.bullets?.slice(0, 6) ?? null;
+  const marketingCopy = input.rewrittenContent?.description?.slice(0, 2000) ?? input.snapshot.description?.slice(0, 2000) ?? null;
 
   const answerResult = await generateWayfairAnswers({
     snapshot: input.snapshot,
@@ -116,9 +127,9 @@ export async function buildWayfairSubmitRequest(input: {
             supplierPartNumber,
             manufacturerId,
             amazonStandardIdentificationNumber: input.snapshot.asin,
-            productName: input.snapshot.title,
-            featureBullets: input.snapshot.bullets?.slice(0, 6) ?? null,
-            marketingCopy: input.snapshot.description?.slice(0, 2000) ?? null,
+            productName,
+            featureBullets,
+            marketingCopy,
             media: { images: imageUrls },
             answers
           }
@@ -134,7 +145,136 @@ export async function buildWayfairSubmitRequest(input: {
       manufacturerId,
       supplierPartNumber,
       imageUrls,
-      usedUploadedImages: Boolean(input.uploadedImageUrls && input.uploadedImageUrls.length > 0)
+      usedUploadedImages: Boolean(input.uploadedImageUrls && input.uploadedImageUrls.length > 0),
+      usedRewrittenContent: Boolean(input.rewrittenContent)
+    }
+  };
+}
+
+export type VariantBatchInput = {
+  asin: string;
+  snapshot: AmazonProductSnapshot;
+  imageUrls: string[];
+  isMain: boolean;
+  rewrittenContent?: RewrittenContentInput | null;
+};
+
+export type VariantBatchBuildResult = {
+  request: WayfairSubmitProductAdditionsRequest;
+  answerResults: Map<string, unknown>;
+  selected: {
+    manufacturerId: string;
+    parts: Array<{
+      asin: string;
+      supplierPartNumber: string;
+      imageUrls: string[];
+      isMain: boolean;
+    }>;
+  };
+};
+
+export async function buildWayfairBatchSubmitRequest(input: {
+  variants: VariantBatchInput[];
+  classId: number;
+  marketContext: WayfairMarketContextInput;
+  supplierId: string;
+  questions: WayfairProductAdditionQuestion[];
+  brandAssociations: WayfairSupplierBrandAssociation[];
+  mediaMetaDataTags: WayfairMediaMetaDataTagSet[];
+  manufacturerId?: string | null;
+}): Promise<VariantBatchBuildResult> {
+  const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
+  if (!manufacturerId) {
+    throw new Error("brandAssociations 为空，无法选择 manufacturerId");
+  }
+
+  if (input.variants.length === 0) {
+    throw new Error("variants 为空，无法构建批次提交请求");
+  }
+
+  const sortedVariants = [...input.variants].sort((a, b) => {
+    if (a.isMain && !b.isMain) return -1;
+    if (!a.isMain && b.isMain) return 1;
+    return 0;
+  });
+
+  const parts: WayfairSubmitProductAdditionsRequest["proposedProductAdditions"][0]["parts"] = [];
+  const answerResults = new Map<string, unknown>();
+  const selectedParts: VariantBatchBuildResult["selected"]["parts"] = [];
+
+  for (const variant of sortedVariants) {
+    const supplierPartNumber = buildSupplierPartNumber(variant.snapshot);
+    const imageUrls = variant.imageUrls.length > 0
+      ? variant.imageUrls
+      : selectImageUrls({ snapshot: variant.snapshot });
+
+    if (imageUrls.length === 0) {
+      continue;
+    }
+
+    const answerResult = await generateWayfairAnswers({
+      snapshot: variant.snapshot,
+      questions: input.questions,
+      skipQuestionIds: Array.from(coreQuestionIds)
+    });
+    answerResults.set(variant.asin, answerResult);
+
+    const rawAnswers = (answerResult.data as { answers?: unknown }).answers;
+    const answers = Array.isArray(rawAnswers)
+      ? sanitizeAnswers(
+          rawAnswers.filter(
+            (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
+              item && typeof item === "object" && "questionId" in item && "value" in item
+          )
+        )
+      : [];
+
+    const productName = variant.rewrittenContent?.productName ?? variant.snapshot.title;
+    const featureBullets = variant.rewrittenContent?.bullets?.slice(0, 6) ?? variant.snapshot.bullets?.slice(0, 6) ?? null;
+    const marketingCopy = variant.rewrittenContent?.description?.slice(0, 2000) ?? variant.snapshot.description?.slice(0, 2000) ?? null;
+
+    parts.push({
+      supplierPartNumber,
+      manufacturerId,
+      amazonStandardIdentificationNumber: variant.snapshot.asin,
+      productName,
+      featureBullets,
+      marketingCopy,
+      media: { images: imageUrls },
+      answers
+    });
+
+    selectedParts.push({
+      asin: variant.asin,
+      supplierPartNumber,
+      imageUrls,
+      isMain: variant.isMain
+    });
+  }
+
+  if (parts.length === 0) {
+    throw new Error("没有有效的变体可以提交（所有变体都缺少图片）");
+  }
+
+  const request: WayfairSubmitProductAdditionsRequest = {
+    supplierId: input.supplierId,
+    ignoreWarnings: true,
+    rejectAllOnErrors: true,
+    proposedProductAdditions: [
+      {
+        classId: input.classId,
+        marketContext: input.marketContext,
+        parts
+      }
+    ]
+  };
+
+  return {
+    request,
+    answerResults,
+    selected: {
+      manufacturerId,
+      parts: selectedParts
     }
   };
 }

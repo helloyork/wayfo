@@ -23,13 +23,30 @@ export function RunProgressPanel({ runId, steps, initialStatus, initialStep }: R
     if (status === "COMPLETED") {
       return { percent: 100, currentTitle: "完成" };
     }
+    const waitingReview = status === "NEEDS_REVIEW" || status === "WAITING_FOR_REVIEW";
     const index = steps.findIndex((step) => step.step === currentStep);
     if (index < 0) {
-      return { percent: 0, currentTitle: currentStep || "未开始" };
+      return {
+        percent: 0,
+        currentTitle: waitingReview ? "等待人工确认" : currentStep || "未开始"
+      };
     }
     const total = steps.length;
     const ratio = total > 0 ? (index + 1) / total : 0;
-    return { percent: Math.round(ratio * 100), currentTitle: steps[index].title };
+    const basePercent = Math.round(ratio * 100);
+    if (waitingReview) {
+      return {
+        percent: Math.min(basePercent, 95),
+        currentTitle: "等待人工确认"
+      };
+    }
+    if (currentStep === "WAYFAIR_POLL" && status !== "COMPLETED") {
+      return {
+        percent: Math.min(basePercent, 95),
+        currentTitle: "轮询中"
+      };
+    }
+    return { percent: basePercent, currentTitle: steps[index].title };
   }, [currentStep, status, steps]);
 
   useEffect(() => {
