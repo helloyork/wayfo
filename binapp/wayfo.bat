@@ -2,6 +2,9 @@
 setlocal
 chcp 65001 >nul
 
+REM Change to project root directory (parent of binapp)
+cd /d "%~dp0.."
+
 echo(  ==============================================
 echo(^|^| ██╗    ██╗ █████╗ ██╗   ██╗███████╗ ██████╗  ^|^|
 echo(^|^| ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝██╔═══██╗ ^|^|
