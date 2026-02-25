@@ -8,7 +8,7 @@
     "dev": "concurrently -k \"yarn:dev:server\" \"yarn:dev:web\"",
     "dev:server": "yarn workspace @wayfo/server dev",
     "dev:web": "yarn workspace @wayfo/web dev",
-    "launch": "yarn workspace @wayfo/web dev -H 0.0.0.0",
+    "launch": "concurrently -k \"yarn:dev:server\" \"yarn:dev:web -H 0.0.0.0\"",
     "dev:shared": "yarn workspace @wayfo/shared dev:build",
     "build": "yarn workspaces foreach -A --topological run build",
     "build:server": "yarn workspace @wayfo/server build",
