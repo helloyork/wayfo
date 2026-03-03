@@ -10,6 +10,7 @@ type HasDataSettings = {
 type AppSettings = {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
+  timezone: string;
   updatedAt: string;
 };
 
@@ -229,6 +230,7 @@ export function getAppSettings() {
   return {
     enumerateVariantsDefault: settings?.enumerateVariantsDefault ?? false,
     primaryImageCandidateCount: settings?.primaryImageCandidateCount ?? 4,
+    timezone: settings?.timezone ?? "UTC",
     updatedAt: settings?.updatedAt ?? null
   };
 }
@@ -236,10 +238,12 @@ export function getAppSettings() {
 export function setAppSettings(input: {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
+  timezone: string;
 }) {
   const next: AppSettings = {
     enumerateVariantsDefault: input.enumerateVariantsDefault,
     primaryImageCandidateCount: input.primaryImageCandidateCount,
+    timezone: input.timezone,
     updatedAt: new Date().toISOString()
   };
   writeAppSettings(next);

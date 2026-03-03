@@ -6,7 +6,7 @@
     "rootDir": "src",
     "declaration": false,
     "declarationMap": false,
-    "types": ["node"],
+    "types": ["node", "multer", "exceljs"],
     "strict": true
   },
   "include": ["src"]

@@ -29,7 +29,8 @@ const hasDataKeySchema = z.object({
 
 const appSettingsSchema = z.object({
   enumerateVariantsDefault: z.boolean(),
-  primaryImageCandidateCount: z.number().int().min(1).max(8)
+  primaryImageCandidateCount: z.number().int().min(1).max(8),
+  timezone: z.string().min(1)
 });
 
 const wayfairSettingsSchema = z.object({
@@ -71,6 +72,15 @@ function resolveR2Credentials(input: { accessKeyId?: string; secretAccessKey?: s
   const accessKeyId = input.accessKeyId?.trim() || previous?.accessKeyId;
   const secretAccessKey = input.secretAccessKey?.trim() || previous?.secretAccessKey;
   return { accessKeyId, secretAccessKey };
+}
+
+function isValidTimeZone(timezone: string) {
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: timezone }).format(new Date());
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 settingsRouter.get("/hasdata", (_req, res) => {
@@ -180,13 +190,20 @@ settingsRouter.post("/app", (req, res) => {
   if (!parsed.success) {
     return sendError(res, {
       code: "INVALID_INPUT",
-      message: "enumerateVariantsDefault or primaryImageCandidateCount invalid"
+      message: "enumerateVariantsDefault, primaryImageCandidateCount, or timezone invalid"
+    });
+  }
+  if (!isValidTimeZone(parsed.data.timezone)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "timezone invalid"
     });
   }
   const next = setAppSettings(parsed.data);
   res.json({
     enumerateVariantsDefault: next.enumerateVariantsDefault,
     primaryImageCandidateCount: next.primaryImageCandidateCount,
+    timezone: next.timezone,
     updatedAt: next.updatedAt
   });
 });

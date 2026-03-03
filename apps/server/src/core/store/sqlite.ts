@@ -21,6 +21,8 @@ export function getDb() {
       amazonUrl text not null,
       marketContext text,
       enumerateVariants integer,
+      groupId text,
+      planItemId text,
       createdAt text not null,
       updatedAt text not null
     );
@@ -48,6 +50,33 @@ export function getDb() {
       schemaVersion text not null,
       createdAt text not null
     );
+
+    create table if not exists product_groups (
+      id text primary key,
+      productKey text not null unique,
+      primaryAsin text,
+      createdAt text not null
+    );
+
+    create table if not exists product_group_members (
+      id text primary key,
+      groupId text not null,
+      asin text not null,
+      createdAt text not null,
+      unique(groupId, asin)
+    );
+
+    create table if not exists plan_items (
+      id text primary key,
+      rowHash text not null unique,
+      groupId text not null,
+      amazonUrl text not null,
+      sku text,
+      partNumber text,
+      planDate text not null,
+      isPrimary integer not null default 0,
+      createdAt text not null
+    );
   `);
 
   const runColumns = db
@@ -63,6 +92,16 @@ export function getDb() {
   const hasManufacturerId = runColumns.some((column) => column.name === "manufacturerId");
   if (!hasManufacturerId) {
     db.exec("alter table runs add column manufacturerId text;");
+  }
+
+  const hasGroupId = runColumns.some((column) => column.name === "groupId");
+  if (!hasGroupId) {
+    db.exec("alter table runs add column groupId text;");
+  }
+
+  const hasPlanItemId = runColumns.some((column) => column.name === "planItemId");
+  if (!hasPlanItemId) {
+    db.exec("alter table runs add column planItemId text;");
   }
 
   const jobColumns = db
@@ -86,6 +125,14 @@ export function getDb() {
       on jobs (runId, step, inputHash, schemaVersion);
     create index if not exists idx_artifacts_hash
       on artifacts (runId, type, contentHash);
+    create index if not exists idx_product_groups_key
+      on product_groups (productKey);
+    create index if not exists idx_product_group_members_asin
+      on product_group_members (asin);
+    create index if not exists idx_plan_items_group
+      on plan_items (groupId);
+    create index if not exists idx_plan_items_date
+      on plan_items (planDate);
   `);
 
   dbInstance = db;

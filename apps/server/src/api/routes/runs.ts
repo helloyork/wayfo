@@ -1,7 +1,9 @@
-import { Router } from "express";
+import { Router, type Request } from "express";
+import ExcelJS from "exceljs";
 import fs from "fs";
 import path from "path";
 import { nanoid } from "nanoid";
+import multer from "multer";
 import { z } from "zod";
 import {
   RunEvent,
@@ -21,13 +23,24 @@ import {
   createArtifact,
   createRun,
   getRun,
+  hashInput,
   listArtifacts,
   listJobs,
   listRuns,
   updateRun
 } from "../../core/store/runStore";
 import { getAppSettings } from "../../core/store/settingsStore";
+import {
+  addProductGroupMembers,
+  createPlanItem,
+  createProductGroup,
+  getPlanItemByRowHash,
+  getProductGroupByAsin,
+  getProductGroupByKey,
+  setProductGroupPrimaryAsin
+} from "../../core/store/planStore";
 import { startRun, resumeRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
+import { extractAsin } from "../../core/amazon/asin";
 
 export const runsRouter = Router();
 
@@ -46,6 +59,13 @@ const reviewSchema = z.object({
   request: z.record(z.string(), z.unknown())
 });
 
+const planImportSchema = z.object({
+  marketContext: z.string().min(1),
+  manufacturerId: z.string().optional()
+});
+
+type UploadRequest = Request & { file?: { buffer: Buffer } };
+
 function readJson<T>(filePath: string): T | null {
   if (!fs.existsSync(filePath)) {
     return null;
@@ -60,6 +80,60 @@ function readJsonWithMeta<T>(filePath: string): { data: T; updatedAt: string } |
   const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as T;
   const stat = fs.statSync(filePath);
   return { data: raw, updatedAt: stat.mtime.toISOString() };
+}
+
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 4 * 1024 * 1024 }
+});
+
+function normalizeProductLink(input: string) {
+  const trimmed = input.trim();
+  try {
+    const url = new URL(trimmed);
+    return `${url.origin}${url.pathname}`.toLowerCase();
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+function formatDateKeyInTimeZone(date: Date, timeZone: string) {
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit"
+  });
+  const parts = formatter.formatToParts(date);
+  const year = parts.find((part) => part.type === "year")?.value ?? "0000";
+  const month = parts.find((part) => part.type === "month")?.value ?? "00";
+  const day = parts.find((part) => part.type === "day")?.value ?? "00";
+  return `${year}-${month}-${day}`;
+}
+
+function parsePlanDate(value: unknown): { raw: string; key: string } | null {
+  if (!value) {
+    return null;
+  }
+  if (value instanceof Date) {
+    const year = value.getFullYear();
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    const raw = `${month}-${day}-${year}`;
+    return { raw, key: `${year}-${month}-${day}` };
+  }
+  const raw = String((value as { text?: string }).text ?? value).trim();
+  if (!raw) {
+    return null;
+  }
+  const match = raw.match(/^(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])-(\d{4})$/);
+  if (!match) {
+    return null;
+  }
+  const month = match[1];
+  const day = match[2];
+  const year = match[3];
+  return { raw, key: `${year}-${month}-${day}` };
 }
 
 function readQuestionsArtifact(runId: string) {
@@ -124,6 +198,205 @@ function normalizeReviewRequest(
     summary: { removedAnswers: 0, normalizedAnswers: 0, fixedRanks: 0, touchedQuestions: [] }
   };
 }
+
+function readCellText(cell: { text?: string; value?: unknown }) {
+  return String(cell.text ?? cell.value ?? "").trim();
+}
+
+runsRouter.get("/plan-template", async (_req, res) => {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "wayfo";
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet("Plan");
+  sheet.columns = [
+    { header: "产品链接", key: "amazonUrl", width: 50 },
+    { header: "SKU", key: "sku", width: 20 },
+    { header: "Part Number", key: "partNumber", width: 26 },
+    { header: "时间", key: "planDate", width: 18 }
+  ];
+  sheet.views = [{ state: "frozen", ySplit: 1 }];
+  const header = sheet.getRow(1);
+  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
+  header.alignment = { vertical: "middle", horizontal: "center" };
+  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
+  header.height = 22;
+  sheet.getColumn(4).numFmt = "mm-dd-yyyy";
+  sheet.getRow(2).height = 18;
+
+  res.setHeader(
+    "Content-Type",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+  );
+  res.setHeader("Content-Disposition", "attachment; filename=\"plan-template.xlsx\"");
+  await workbook.xlsx.write(res);
+  res.end();
+});
+
+runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
+  const parsed = planImportSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "marketContext is required"
+    });
+  }
+  const uploadRequest = req as UploadRequest;
+  if (!uploadRequest.file) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "file is required"
+    });
+  }
+
+  const settings = getAppSettings();
+  const timezone = settings.timezone ?? "UTC";
+  const todayKey = formatDateKeyInTimeZone(new Date(), timezone);
+
+  const workbook = new ExcelJS.Workbook();
+  await workbook.xlsx.load(uploadRequest.file.buffer as Buffer);
+  const sheet = workbook.worksheets[0];
+  if (!sheet) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "empty workbook"
+    });
+  }
+
+  const headerRow = sheet.getRow(1);
+  const headerMap = new Map<string, number>();
+  headerRow.eachCell((cell: { text?: string; value?: unknown }, colNumber: number) => {
+    const header = readCellText(cell);
+    if (header) {
+      headerMap.set(header, colNumber);
+    }
+  });
+  const requiredHeaders = ["产品链接", "SKU", "Part Number", "时间"];
+  const missingHeaders = requiredHeaders.filter((name) => !headerMap.has(name));
+  if (missingHeaders.length > 0) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: `missing headers: ${missingHeaders.join(", ")}`
+    });
+  }
+
+  const errors: Array<{ row: number; message: string }> = [];
+  let rowCount = 0;
+  let validCount = 0;
+  let importedCount = 0;
+  let skippedCount = 0;
+  let createdRuns = 0;
+  const seenGroupIds = new Set<string>();
+
+  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+    const row = sheet.getRow(rowNumber);
+    const amazonUrl = readCellText(row.getCell(headerMap.get("产品链接")!));
+    const sku = readCellText(row.getCell(headerMap.get("SKU")!));
+    const partNumber = readCellText(row.getCell(headerMap.get("Part Number")!));
+    const planDateCell = row.getCell(headerMap.get("时间")!);
+
+    if (!amazonUrl && !sku && !partNumber && !planDateCell.value) {
+      continue;
+    }
+    rowCount += 1;
+
+    if (!amazonUrl) {
+      errors.push({ row: rowNumber, message: "产品链接为空" });
+      continue;
+    }
+
+    const parsedDate = parsePlanDate(planDateCell.value);
+    if (!parsedDate) {
+      errors.push({ row: rowNumber, message: "时间格式错误，应为 MM-DD-YYYY" });
+      continue;
+    }
+    validCount += 1;
+
+    if (parsedDate.key !== todayKey) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const rowHash = hashInput({
+      amazonUrl,
+      sku,
+      partNumber,
+      planDate: parsedDate.key
+    });
+    if (getPlanItemByRowHash(rowHash)) {
+      skippedCount += 1;
+      continue;
+    }
+
+    const asin = extractAsin(amazonUrl);
+    let group = asin ? getProductGroupByAsin(asin) : null;
+    if (!group) {
+      const productKey = asin ? `asin:${asin}` : `url:${normalizeProductLink(amazonUrl)}`;
+      group = getProductGroupByKey(productKey) ?? createProductGroup({
+        productKey,
+        primaryAsin: asin ?? null
+      });
+    }
+    if (asin) {
+      addProductGroupMembers(group.id, [asin]);
+      setProductGroupPrimaryAsin(group.id, asin);
+    }
+
+    const isPrimary = !seenGroupIds.has(group.id);
+    seenGroupIds.add(group.id);
+
+    const planItem = createPlanItem({
+      rowHash,
+      groupId: group.id,
+      amazonUrl,
+      sku: sku || null,
+      partNumber: partNumber || null,
+      planDate: parsedDate.key,
+      isPrimary
+    });
+    importedCount += 1;
+
+    if (isPrimary) {
+      const run = createRun({
+        amazonUrl,
+        marketContext: parsed.data.marketContext,
+        manufacturerId: parsed.data.manufacturerId,
+        enumerateVariants: true,
+        groupId: group.id,
+        planItemId: planItem.id
+      });
+      startRun(run).catch((error) => {
+        log({
+          level: "error",
+          runId: run.id,
+          message: "Run failed",
+          err: error
+        });
+        updateRun(run.id, { status: "FAILED" });
+        eventBus.emit({
+          id: nanoid(),
+          type: "RUN_FAILED",
+          runId: run.id,
+          message: "Run failed",
+          timestamp: new Date().toISOString()
+        });
+      });
+      createdRuns += 1;
+    }
+  }
+
+  res.json({
+    timezone,
+    today: todayKey,
+    summary: {
+      rows: rowCount,
+      validRows: validCount,
+      importedRows: importedCount,
+      skippedRows: skippedCount,
+      createdRuns
+    },
+    errors
+  });
+});
 
 runsRouter.post("/", async (req, res) => {
   const parsed = createRunSchema.safeParse(req.body);

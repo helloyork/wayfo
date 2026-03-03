@@ -69,6 +69,8 @@ export const RunSchema = z.object({
   marketContext: z.string().optional(),
   manufacturerId: z.string().optional(),
   enumerateVariants: z.boolean().optional(),
+  groupId: z.string().optional(),
+  planItemId: z.string().optional(),
   status: RunStatusSchema,
   currentStep: StepSchema.optional(),
   costUsd: z.number().optional(),

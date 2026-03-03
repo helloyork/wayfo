@@ -22,6 +22,8 @@ type RunRow = {
   marketContext: string | null;
   manufacturerId: string | null;
   enumerateVariants: number | null;
+  groupId: string | null;
+  planItemId: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -125,6 +127,8 @@ export function createRun(input: {
   marketContext?: string;
   manufacturerId?: string;
   enumerateVariants?: boolean;
+  groupId?: string;
+  planItemId?: string;
 }): Run {
   const now = new Date().toISOString();
   const id = nanoid();
@@ -134,6 +138,8 @@ export function createRun(input: {
     marketContext: input.marketContext,
     manufacturerId: input.manufacturerId,
     enumerateVariants: input.enumerateVariants ?? false,
+    groupId: input.groupId,
+    planItemId: input.planItemId,
     status: "PENDING",
     createdAt: now,
     updatedAt: now
@@ -154,6 +160,8 @@ export function createRun(input: {
         marketContext,
         manufacturerId,
         enumerateVariants,
+        groupId,
+        planItemId,
         createdAt,
         updatedAt
       )
@@ -165,6 +173,8 @@ export function createRun(input: {
         @marketContext,
         @manufacturerId,
         @enumerateVariants,
+        @groupId,
+        @planItemId,
         @createdAt,
         @updatedAt
       )
@@ -173,7 +183,9 @@ export function createRun(input: {
     ...run,
     currentStep: null,
     manufacturerId: run.manufacturerId ?? null,
-    enumerateVariants: run.enumerateVariants ? 1 : 0
+    enumerateVariants: run.enumerateVariants ? 1 : 0,
+    groupId: run.groupId ?? null,
+    planItemId: run.planItemId ?? null
   });
 
   return run;
@@ -202,6 +214,8 @@ export function listRuns(): Run[] {
     marketContext: row.marketContext ?? undefined,
     manufacturerId: row.manufacturerId ?? undefined,
     enumerateVariants: row.enumerateVariants ? row.enumerateVariants === 1 : undefined,
+    groupId: row.groupId ?? undefined,
+    planItemId: row.planItemId ?? undefined,
     status: row.status,
     currentStep: row.currentStep ?? undefined,
     createdAt: row.createdAt,
@@ -237,6 +251,8 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
           marketContext = @marketContext,
           manufacturerId = @manufacturerId,
           enumerateVariants = @enumerateVariants,
+          groupId = @groupId,
+          planItemId = @planItemId,
           updatedAt = @updatedAt
       where id = @id
     `
@@ -248,6 +264,8 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
     marketContext: next.marketContext ?? null,
     manufacturerId: next.manufacturerId ?? null,
     enumerateVariants: next.enumerateVariants ? 1 : 0,
+    groupId: next.groupId ?? null,
+    planItemId: next.planItemId ?? null,
     updatedAt: next.updatedAt
   });
 

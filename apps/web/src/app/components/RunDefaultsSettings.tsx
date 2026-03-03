@@ -6,12 +6,38 @@ import { apiBase } from "../../lib/api";
 type AppSettingsResponse = {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
+  timezone: string;
   updatedAt: string | null;
 };
+
+const fallbackTimezones = [
+  "UTC",
+  "America/Los_Angeles",
+  "America/New_York",
+  "Europe/London",
+  "Europe/Berlin",
+  "Asia/Shanghai",
+  "Asia/Tokyo",
+  "Asia/Singapore",
+  "Australia/Sydney"
+];
+
+function getTimezoneOptions() {
+  const resolved = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+  const supportedValuesOf = (Intl as { supportedValuesOf?: (key: "timeZone") => string[] })
+    .supportedValuesOf;
+  const supported = typeof supportedValuesOf === "function"
+    ? supportedValuesOf("timeZone")
+    : fallbackTimezones;
+  const options = new Set<string>(supported);
+  options.add(resolved);
+  return Array.from(options);
+}
 
 export function RunDefaultsSettings() {
   const [enumerateVariantsDefault, setEnumerateVariantsDefault] = useState(false);
   const [primaryImageCandidateCount, setPrimaryImageCandidateCount] = useState(4);
+  const [timezone, setTimezone] = useState("UTC");
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [statusTone, setStatusTone] = useState<"success" | "warning" | "danger">(
@@ -29,6 +55,7 @@ export function RunDefaultsSettings() {
     const payload = (await res.json()) as AppSettingsResponse;
     setEnumerateVariantsDefault(payload.enumerateVariantsDefault);
     setPrimaryImageCandidateCount(payload.primaryImageCandidateCount ?? 4);
+    setTimezone(payload.timezone || "UTC");
     setUpdatedAt(payload.updatedAt);
   };
 
@@ -42,7 +69,7 @@ export function RunDefaultsSettings() {
       const res = await fetch(`${apiBase}/api/settings/app`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enumerateVariantsDefault, primaryImageCandidateCount })
+        body: JSON.stringify({ enumerateVariantsDefault, primaryImageCandidateCount, timezone })
       });
       if (!res.ok) {
         throw new Error("保存失败");
@@ -86,6 +113,21 @@ export function RunDefaultsSettings() {
           value={primaryImageCandidateCount}
           onChange={(event) => setPrimaryImageCandidateCount(Number(event.target.value) || 1)}
         />
+      </label>
+      <label className="stack">
+        <span>计划时区</span>
+        <span className="muted">用于判断计划日期是否为“当天”。</span>
+        <select
+          className="input"
+          value={timezone}
+          onChange={(event) => setTimezone(event.target.value)}
+        >
+          {getTimezoneOptions().map((value) => (
+            <option key={value} value={value}>
+              {value}
+            </option>
+          ))}
+        </select>
       </label>
       <div className="row">
         <button className="btn" type="button" onClick={onSave} disabled={loading}>

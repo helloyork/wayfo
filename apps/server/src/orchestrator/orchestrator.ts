@@ -22,6 +22,7 @@ import {
   updateJob,
   updateRun
 } from "../core/store/runStore";
+import { addProductGroupMembers, setProductGroupPrimaryAsin } from "../core/store/planStore";
 import {
   getAppSettings,
   getHasDataApiKey,
@@ -53,7 +54,7 @@ import {
 import { flattenQuestions, normalizeAnswersForPart } from "../core/wayfair/answerRules";
 import { submitWayfairProductAdditions, fetchWayfairSubmissions } from "../core/wayfair/productAddition";
 import { buildWayfairSubmitRequest, buildWayfairBatchSubmitRequest, type VariantBatchInput, type RewrittenContentInput } from "../core/wayfair/submitBuilder";
-import { rewriteProductContent, type RewrittenContent } from "../core/wayfair/contentRewriter";
+import { rewriteProductContent } from "../core/wayfair/contentRewriter";
 import { reduceWayfairFlaws } from "../core/wayfair/flawReducer";
 import { repairFlawsWithAgent, type FlawAgentResult } from "../core/wayfair/flawAgent";
 import { dataRoot, runsRoot, ensureDir } from "../core/paths";
@@ -62,14 +63,14 @@ import {
   scrapeAmazonProduct
 } from "../connectors/hasdata";
 import { downloadProductImages } from "../core/images/downloadPool";
-import { generateImages, generateImagesForPlan, type GeneratedImage } from "../core/images/generator";
+import { generateImagesForPlan, type GeneratedImage } from "../core/images/generator";
 import {
   buildImageUrlsForSubmit,
   configureR2LifecycleRules,
   uploadImagesToR2,
   type UploadedImage
 } from "../core/images/r2Uploader";
-import { createSimpleGenerationPlan, type GenerationPlan, type SimpleImageInput, type ImageType } from "../core/images/planner";
+import { createSimpleGenerationPlan, type SimpleImageInput } from "../core/images/planner";
 
 const steps: Step[] = [
   "SCRAPE_AMAZON",
@@ -577,6 +578,16 @@ async function runScrapeAmazon(run: Run) {
   } catch (error) {
     handleJobError(run.id, seedJob.id, "SCRAPE_AMAZON", error);
     return;
+  }
+
+  if (run.groupId && seedSnapshot) {
+    const variantAsinsForGroup =
+      seedSnapshot.variants?.map((variant) => variant.asin).filter(Boolean) ?? [];
+    const memberAsins = [seedSnapshot.asin, ...variantAsinsForGroup].filter(Boolean) as string[];
+    addProductGroupMembers(run.groupId, memberAsins);
+    if (seedSnapshot.asin) {
+      setProductGroupPrimaryAsin(run.groupId, seedSnapshot.asin);
+    }
   }
 
   if (!run.enumerateVariants) {
