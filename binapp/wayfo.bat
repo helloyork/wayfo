@@ -69,7 +69,7 @@ if %errorlevel%==0 (
 )
 git pull
 if errorlevel 1 exit /b %errorlevel%
-yarn install
+call yarn install
 echo Restarting Wayfo service...
 call :ensure_log_files
 call :ensure_yarn
@@ -135,14 +135,14 @@ exit /b 0
 REM Ensure service build exists before starting.
 if exist "apps\service\dist\index.js" exit /b 0
 echo Service build not found. Building...
-yarn workspace @wayfo/service build
+call yarn workspace @wayfo/service build
 if errorlevel 1 exit /b %errorlevel%
 exit /b 0
 
 :ensure_service_build_always
 REM Always build service during update.
 echo Building service...
-yarn workspace @wayfo/service build
+call yarn workspace @wayfo/service build
 if errorlevel 1 exit /b %errorlevel%
 exit /b 0
 
