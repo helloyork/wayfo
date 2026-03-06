@@ -23,7 +23,7 @@ if /I "%~1"=="update" goto :update
 if /I "%~1"=="status" goto :status
 goto :usage
 
-:::launch
+:launch
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
@@ -35,11 +35,11 @@ echo Starting Wayfo service...
 call :start_service "%~2"
 
 timeout /t 1 /nobreak >nul
-::logs
+:logs
 curl -N %SERVICE_URL%/logs/stream
 goto :eof
 
-:::stop
+:stop
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==1 (
@@ -50,7 +50,7 @@ powershell -NoProfile -Command "Invoke-RestMethod -Method Post -Uri '%SERVICE_UR
 echo Stop request sent.
 goto :eof
 
-:::update
+:update
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
@@ -65,7 +65,7 @@ echo Restarting Wayfo service...
 call :start_service
 goto :eof
 
-:::status
+:status
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
@@ -75,15 +75,15 @@ if %errorlevel%==0 (
 )
 goto :eof
 
-:::usage
+:usage
 echo Usage: wayfo ^<launch^|stop^|update^|status^> [--dev]
 exit /b 1
 
-:::is_running
+:is_running
 powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { iwr -UseBasicParsing -TimeoutSec 1 '%SERVICE_URL%/status' | Out-Null; exit 0 } catch { exit 1 }"
 exit /b %errorlevel%
 
-::start_service
+:start_service
 if /I "%~1"=="--dev" (
   powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath 'yarn' -ArgumentList 'workspace','@wayfo/service','dev' -WorkingDirectory '%cd%'"
 ) else (
