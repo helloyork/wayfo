@@ -20,9 +20,10 @@ if "%~1"=="" goto :usage
 if /I "%~1"=="launch" goto :launch
 if /I "%~1"=="stop" goto :stop
 if /I "%~1"=="update" goto :update
+if /I "%~1"=="status" goto :status
 goto :usage
 
-::launch
+:::launch
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
@@ -31,18 +32,14 @@ if %errorlevel%==0 (
 )
 
 echo Starting Wayfo service...
-if /I "%~2"=="--dev" (
-  powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath 'yarn' -ArgumentList 'workspace','@wayfo/service','dev' -WorkingDirectory '%cd%'"
-) else (
-  powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath 'yarn' -ArgumentList 'workspace','@wayfo/service','start' -WorkingDirectory '%cd%'"
-)
+call :start_service "%~2"
 
 timeout /t 1 /nobreak >nul
-:logs
+::logs
 curl -N %SERVICE_URL%/logs/stream
 goto :eof
 
-::stop
+:::stop
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==1 (
@@ -53,59 +50,43 @@ powershell -NoProfile -Command "Invoke-RestMethod -Method Post -Uri '%SERVICE_UR
 echo Stop request sent.
 goto :eof
 
-::update
+:::update
 set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
-  echo Wayfo service is running.
-  echo Please run: wayfo stop
-  exit /b 1
+  echo Stopping Wayfo service...
+  powershell -NoProfile -Command "Invoke-RestMethod -Method Post -Uri '%SERVICE_URL%/stop' | Out-Null"
+  timeout /t 1 /nobreak >nul
 )
 git pull
 if errorlevel 1 exit /b %errorlevel%
 yarn install
+echo Restarting Wayfo service...
+call :start_service
 goto :eof
 
-::usage
-echo Usage: wayfo ^<launch^|stop^|update^> [--dev]
+:::status
+set "SERVICE_URL=http://127.0.0.1:3999"
+call :is_running
+if %errorlevel%==0 (
+  echo Wayfo service is running.
+) else (
+  echo Wayfo service is not running.
+)
+goto :eof
+
+:::usage
+echo Usage: wayfo ^<launch^|stop^|update^|status^> [--dev]
 exit /b 1
 
-::is_running
+:::is_running
 powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { iwr -UseBasicParsing -TimeoutSec 1 '%SERVICE_URL%/status' | Out-Null; exit 0 } catch { exit 1 }"
 exit /b %errorlevel%
-@echo off
-setlocal
-chcp 65001 >nul
 
-REM Change to project root directory (parent of binapp)
-cd /d "%~dp0.."
-
-echo(  ==============================================
-echo(^|^| ██╗    ██╗ █████╗ ██╗   ██╗███████╗ ██████╗  ^|^|
-echo(^|^| ██║    ██║██╔══██╗╚██╗ ██╔╝██╔════╝██╔═══██╗ ^|^|
-echo(^|^| ██║ █╗ ██║███████║ ╚████╔╝ █████╗  ██║   ██║ ^|^|
-echo(^|^| ██║███╗██║██╔══██║  ╚██╔╝  ██╔══╝  ██║   ██║ ^|^|
-echo(^|^| ╚███╔███╔╝██║  ██║   ██║   ██║     ╚██████╔╝ ^|^|
-echo(^|^|  ╚══╝╚══╝ ╚═╝  ╚═╝   ╚═╝   ╚═╝      ╚═════╝  ^|^|
-echo(^|^| Wayfo by Nomen(https://github.com/helloyork) ^|^|
-echo(  ==============================================
-echo(
-
-if "%~1"=="" goto :usage
-if /I "%~1"=="launch" goto :launch
-if /I "%~1"=="update" goto :update
-goto :usage
-
-:launch
-yarn launch
-goto :eof
-
-:update
-git pull
-if errorlevel 1 exit /b %errorlevel%
-yarn install
-goto :eof
-
-:usage
-echo Usage: wayfo ^<launch^|update^>
-exit /b 1
+::start_service
+if /I "%~1"=="--dev" (
+  powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath 'yarn' -ArgumentList 'workspace','@wayfo/service','dev' -WorkingDirectory '%cd%'"
+) else (
+  powershell -NoProfile -Command "Start-Process -WindowStyle Hidden -FilePath 'yarn' -ArgumentList 'workspace','@wayfo/service','start' -WorkingDirectory '%cd%'"
+)
+exit /b 0

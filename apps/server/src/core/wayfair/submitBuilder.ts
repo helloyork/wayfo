@@ -81,6 +81,7 @@ export async function buildWayfairSubmitRequest(input: {
   manufacturerId?: string | null;
   uploadedImageUrls?: string[] | null;
   rewrittenContent?: RewrittenContentInput | null;
+  universalProductCode?: string | null;
 }) {
   const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
@@ -99,10 +100,16 @@ export async function buildWayfairSubmitRequest(input: {
   const featureBullets = input.rewrittenContent?.bullets?.slice(0, 6) ?? input.snapshot.bullets?.slice(0, 6) ?? null;
   const marketingCopy = input.rewrittenContent?.description?.slice(0, 2000) ?? input.snapshot.description?.slice(0, 2000) ?? null;
 
+  const universalProductCode = input.universalProductCode?.trim();
+  const skipQuestionIds = new Set(coreQuestionIds);
+  if (universalProductCode) {
+    skipQuestionIds.add("core::universalProductCode");
+  }
+
   const answerResult = await generateWayfairAnswers({
     snapshot: input.snapshot,
     questions: input.questions,
-    skipQuestionIds: Array.from(coreQuestionIds)
+    skipQuestionIds: Array.from(skipQuestionIds)
   });
   const rawAnswers = (answerResult.data as { answers?: unknown }).answers;
   const answers = Array.isArray(rawAnswers)
@@ -131,7 +138,8 @@ export async function buildWayfairSubmitRequest(input: {
             featureBullets,
             marketingCopy,
             media: { images: imageUrls },
-            answers
+            answers,
+            ...(universalProductCode ? { universalProductCode } : {})
           }
         ]
       }
@@ -182,6 +190,7 @@ export async function buildWayfairBatchSubmitRequest(input: {
   brandAssociations: WayfairSupplierBrandAssociation[];
   mediaMetaDataTags: WayfairMediaMetaDataTagSet[];
   manufacturerId?: string | null;
+  universalProductCode?: string | null;
 }): Promise<VariantBatchBuildResult> {
   const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
@@ -190,6 +199,12 @@ export async function buildWayfairBatchSubmitRequest(input: {
 
   if (input.variants.length === 0) {
     throw new Error("variants 为空，无法构建批次提交请求");
+  }
+
+  const universalProductCode = input.universalProductCode?.trim();
+  const skipQuestionIds = new Set(coreQuestionIds);
+  if (universalProductCode) {
+    skipQuestionIds.add("core::universalProductCode");
   }
 
   const sortedVariants = [...input.variants].sort((a, b) => {
@@ -215,7 +230,7 @@ export async function buildWayfairBatchSubmitRequest(input: {
     const answerResult = await generateWayfairAnswers({
       snapshot: variant.snapshot,
       questions: input.questions,
-      skipQuestionIds: Array.from(coreQuestionIds)
+      skipQuestionIds: Array.from(skipQuestionIds)
     });
     answerResults.set(variant.asin, answerResult);
 
@@ -241,7 +256,8 @@ export async function buildWayfairBatchSubmitRequest(input: {
       featureBullets,
       marketingCopy,
       media: { images: imageUrls },
-      answers
+      answers,
+      ...(universalProductCode ? { universalProductCode } : {})
     });
 
     selectedParts.push({

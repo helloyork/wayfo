@@ -23,6 +23,7 @@ import {
   createArtifact,
   createRun,
   getRun,
+  hasRunForGroup,
   hashInput,
   listArtifacts,
   listJobs,
@@ -32,11 +33,12 @@ import {
 import { getAppSettings } from "../../core/store/settingsStore";
 import {
   addProductGroupMembers,
+  deactivateAllPlanItems,
   createPlanItem,
   createProductGroup,
-  getPlanItemByRowHash,
   getProductGroupByAsin,
   getProductGroupByKey,
+  listActivePlanItemsByDate,
   setProductGroupPrimaryAsin
 } from "../../core/store/planStore";
 import { startRun, resumeRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
@@ -60,6 +62,11 @@ const reviewSchema = z.object({
 });
 
 const planImportSchema = z.object({
+  marketContext: z.string().optional(),
+  manufacturerId: z.string().optional()
+});
+
+const planRunSchema = z.object({
   marketContext: z.string().min(1),
   manufacturerId: z.string().optional()
 });
@@ -212,6 +219,7 @@ runsRouter.get("/plan-template", async (_req, res) => {
     { header: "产品链接", key: "amazonUrl", width: 50 },
     { header: "SKU", key: "sku", width: 20 },
     { header: "Part Number", key: "partNumber", width: 26 },
+    { header: "UPC", key: "upc", width: 18 },
     { header: "时间", key: "planDate", width: 18 }
   ];
   sheet.views = [{ state: "frozen", ySplit: 1 }];
@@ -220,7 +228,7 @@ runsRouter.get("/plan-template", async (_req, res) => {
   header.alignment = { vertical: "middle", horizontal: "center" };
   header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
   header.height = 22;
-  sheet.getColumn(4).numFmt = "mm-dd-yyyy";
+  sheet.getColumn(5).numFmt = "mm-dd-yyyy";
   sheet.getRow(2).height = 18;
 
   res.setHeader(
@@ -237,7 +245,7 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
   if (!parsed.success) {
     return sendError(res, {
       code: "INVALID_INPUT",
-      message: "marketContext is required"
+      message: "invalid plan import payload"
     });
   }
   const uploadRequest = req as UploadRequest;
@@ -279,12 +287,13 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     });
   }
 
+  deactivateAllPlanItems();
+
   const errors: Array<{ row: number; message: string }> = [];
   let rowCount = 0;
   let validCount = 0;
-  let importedCount = 0;
-  let skippedCount = 0;
-  let createdRuns = 0;
+  let activatedCount = 0;
+  const seenRowHashes = new Set<string>();
   const seenGroupIds = new Set<string>();
 
   for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
@@ -292,6 +301,7 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     const amazonUrl = readCellText(row.getCell(headerMap.get("产品链接")!));
     const sku = readCellText(row.getCell(headerMap.get("SKU")!));
     const partNumber = readCellText(row.getCell(headerMap.get("Part Number")!));
+    const upc = headerMap.has("UPC") ? readCellText(row.getCell(headerMap.get("UPC")!)) : "";
     const planDateCell = row.getCell(headerMap.get("时间")!);
 
     if (!amazonUrl && !sku && !partNumber && !planDateCell.value) {
@@ -311,21 +321,17 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     }
     validCount += 1;
 
-    if (parsedDate.key !== todayKey) {
-      skippedCount += 1;
-      continue;
-    }
-
     const rowHash = hashInput({
       amazonUrl,
       sku,
       partNumber,
+      upc,
       planDate: parsedDate.key
     });
-    if (getPlanItemByRowHash(rowHash)) {
-      skippedCount += 1;
+    if (seenRowHashes.has(rowHash)) {
       continue;
     }
+    seenRowHashes.add(rowHash);
 
     const asin = extractAsin(amazonUrl);
     let group = asin ? getProductGroupByAsin(asin) : null;
@@ -350,37 +356,12 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
       amazonUrl,
       sku: sku || null,
       partNumber: partNumber || null,
+      upc: upc || null,
       planDate: parsedDate.key,
       isPrimary
     });
-    importedCount += 1;
-
-    if (isPrimary) {
-      const run = createRun({
-        amazonUrl,
-        marketContext: parsed.data.marketContext,
-        manufacturerId: parsed.data.manufacturerId,
-        enumerateVariants: true,
-        groupId: group.id,
-        planItemId: planItem.id
-      });
-      startRun(run).catch((error) => {
-        log({
-          level: "error",
-          runId: run.id,
-          message: "Run failed",
-          err: error
-        });
-        updateRun(run.id, { status: "FAILED" });
-        eventBus.emit({
-          id: nanoid(),
-          type: "RUN_FAILED",
-          runId: run.id,
-          message: "Run failed",
-          timestamp: new Date().toISOString()
-        });
-      });
-      createdRuns += 1;
+    if (planItem) {
+      activatedCount += 1;
     }
   }
 
@@ -390,11 +371,75 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     summary: {
       rows: rowCount,
       validRows: validCount,
-      importedRows: importedCount,
-      skippedRows: skippedCount,
-      createdRuns
+      activatedRows: activatedCount
     },
     errors
+  });
+});
+
+runsRouter.post("/plan-run", async (req, res) => {
+  const parsed = planRunSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "marketContext is required"
+    });
+  }
+
+  const settings = getAppSettings();
+  const timezone = settings.timezone ?? "UTC";
+  const todayKey = formatDateKeyInTimeZone(new Date(), timezone);
+  const planItems = listActivePlanItemsByDate(todayKey);
+
+  let createdRuns = 0;
+  let skippedExisting = 0;
+  let skippedSecondary = 0;
+
+  for (const item of planItems) {
+    if (!item.isPrimary) {
+      skippedSecondary += 1;
+      continue;
+    }
+    if (hasRunForGroup(item.groupId)) {
+      skippedExisting += 1;
+      continue;
+    }
+    const run = createRun({
+      amazonUrl: item.amazonUrl,
+      marketContext: parsed.data.marketContext,
+      manufacturerId: parsed.data.manufacturerId,
+      enumerateVariants: true,
+      groupId: item.groupId,
+      planItemId: item.id
+    });
+    startRun(run).catch((error) => {
+      log({
+        level: "error",
+        runId: run.id,
+        message: "Run failed",
+        err: error
+      });
+      updateRun(run.id, { status: "FAILED" });
+      eventBus.emit({
+        id: nanoid(),
+        type: "RUN_FAILED",
+        runId: run.id,
+        message: "Run failed",
+        timestamp: new Date().toISOString()
+      });
+    });
+    createdRuns += 1;
+  }
+
+  res.json({
+    timezone,
+    today: todayKey,
+    summary: {
+      planRows: planItems.length,
+      createdRuns,
+      skippedExisting,
+      skippedSecondary
+    }
   });
 });
 

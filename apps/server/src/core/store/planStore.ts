@@ -15,7 +15,9 @@ export type PlanItem = {
   amazonUrl: string;
   sku?: string | null;
   partNumber?: string | null;
+  upc?: string | null;
   planDate: string;
+  isActive: boolean;
   isPrimary: boolean;
   createdAt: string;
 };
@@ -93,16 +95,46 @@ export function getPlanItemByRowHash(rowHash: string): PlanItem | null {
   const db = getDb();
   const row = db.prepare(
     `
-      select id, rowHash, groupId, amazonUrl, sku, partNumber, planDate, isPrimary, createdAt
+      select id, rowHash, groupId, amazonUrl, sku, partNumber, upc, planDate, isActive, isPrimary, createdAt
       from plan_items
       where rowHash = @rowHash
       limit 1
     `
-  ).get({ rowHash }) as (Omit<PlanItem, "isPrimary"> & { isPrimary: number }) | undefined;
+  ).get({ rowHash }) as (Omit<PlanItem, "isPrimary" | "isActive"> & {
+    isPrimary: number;
+    isActive: number;
+  }) | undefined;
   if (!row) {
     return null;
   }
-  return { ...row, isPrimary: row.isPrimary === 1 };
+  return {
+    ...row,
+    isActive: row.isActive === 1,
+    isPrimary: row.isPrimary === 1
+  };
+}
+
+export function getPlanItemById(id: string): PlanItem | null {
+  const db = getDb();
+  const row = db.prepare(
+    `
+      select id, rowHash, groupId, amazonUrl, sku, partNumber, upc, planDate, isActive, isPrimary, createdAt
+      from plan_items
+      where id = @id
+      limit 1
+    `
+  ).get({ id }) as (Omit<PlanItem, "isPrimary" | "isActive"> & {
+    isPrimary: number;
+    isActive: number;
+  }) | undefined;
+  if (!row) {
+    return null;
+  }
+  return {
+    ...row,
+    isActive: row.isActive === 1,
+    isPrimary: row.isPrimary === 1
+  };
 }
 
 export function createPlanItem(input: {
@@ -111,12 +143,37 @@ export function createPlanItem(input: {
   amazonUrl: string;
   sku?: string | null;
   partNumber?: string | null;
+  upc?: string | null;
   planDate: string;
   isPrimary: boolean;
 }) {
   const existing = getPlanItemByRowHash(input.rowHash);
   if (existing) {
-    return existing;
+    const db = getDb();
+    db.prepare(
+      `
+        update plan_items
+        set groupId = @groupId,
+            amazonUrl = @amazonUrl,
+            sku = @sku,
+            partNumber = @partNumber,
+            upc = @upc,
+            planDate = @planDate,
+            isActive = 1,
+            isPrimary = @isPrimary
+        where rowHash = @rowHash
+      `
+    ).run({
+      rowHash: input.rowHash,
+      groupId: input.groupId,
+      amazonUrl: input.amazonUrl,
+      sku: input.sku ?? null,
+      partNumber: input.partNumber ?? null,
+      upc: input.upc ?? null,
+      planDate: input.planDate,
+      isPrimary: input.isPrimary ? 1 : 0
+    });
+    return getPlanItemByRowHash(input.rowHash)!;
   }
   const db = getDb();
   const now = new Date().toISOString();
@@ -127,18 +184,47 @@ export function createPlanItem(input: {
     amazonUrl: input.amazonUrl,
     sku: input.sku ?? null,
     partNumber: input.partNumber ?? null,
+    upc: input.upc ?? null,
     planDate: input.planDate,
+    isActive: true,
     isPrimary: input.isPrimary,
     createdAt: now
   };
   db.prepare(
     `
-      insert into plan_items (id, rowHash, groupId, amazonUrl, sku, partNumber, planDate, isPrimary, createdAt)
-      values (@id, @rowHash, @groupId, @amazonUrl, @sku, @partNumber, @planDate, @isPrimary, @createdAt)
+      insert into plan_items (id, rowHash, groupId, amazonUrl, sku, partNumber, upc, planDate, isActive, isPrimary, createdAt)
+      values (@id, @rowHash, @groupId, @amazonUrl, @sku, @partNumber, @upc, @planDate, @isActive, @isPrimary, @createdAt)
     `
   ).run({
     ...item,
+    isActive: item.isActive ? 1 : 0,
     isPrimary: item.isPrimary ? 1 : 0
   });
   return item;
+}
+
+export function deactivateAllPlanItems() {
+  const db = getDb();
+  db.prepare("update plan_items set isActive = 0").run();
+}
+
+export function listActivePlanItemsByDate(planDate: string): PlanItem[] {
+  const db = getDb();
+  type PlanItemRow = Omit<PlanItem, "isActive" | "isPrimary"> & {
+    isActive: number;
+    isPrimary: number;
+  };
+  const rows = db.prepare(
+    `
+      select id, rowHash, groupId, amazonUrl, sku, partNumber, upc, planDate, isActive, isPrimary, createdAt
+      from plan_items
+      where planDate = @planDate and isActive = 1
+      order by createdAt asc
+    `
+  ).all({ planDate }) as PlanItemRow[];
+  return rows.map((row) => ({
+    ...row,
+    isActive: row.isActive === 1,
+    isPrimary: row.isPrimary === 1
+  }));
 }

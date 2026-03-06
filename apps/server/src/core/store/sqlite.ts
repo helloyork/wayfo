@@ -73,7 +73,9 @@ export function getDb() {
       amazonUrl text not null,
       sku text,
       partNumber text,
+      upc text,
       planDate text not null,
+      isActive integer not null default 1,
       isPrimary integer not null default 0,
       createdAt text not null
     );
@@ -118,6 +120,18 @@ export function getDb() {
   const hasContentHash = artifactColumns.some((column) => column.name === "contentHash");
   if (!hasContentHash) {
     db.exec("alter table artifacts add column contentHash text;");
+  }
+
+  const planItemColumns = db
+    .prepare("pragma table_info(plan_items)")
+    .all() as Array<{ name: string }>;
+  const hasUpc = planItemColumns.some((column) => column.name === "upc");
+  if (!hasUpc) {
+    db.exec("alter table plan_items add column upc text;");
+  }
+  const hasPlanItemActive = planItemColumns.some((column) => column.name === "isActive");
+  if (!hasPlanItemActive) {
+    db.exec("alter table plan_items add column isActive integer not null default 1;");
   }
 
   db.exec(`

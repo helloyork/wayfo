@@ -227,6 +227,14 @@ export function getRun(runId: string): Run | null {
   return readRunFromDisk(runId);
 }
 
+export function hasRunForGroup(groupId: string): boolean {
+  const db = getDb();
+  const row = db
+    .prepare("select id from runs where groupId = ? limit 1")
+    .get(groupId) as { id: string } | undefined;
+  return Boolean(row?.id);
+}
+
 export function updateRun(runId: string, patch: Partial<Run>): Run {
   const runFile = path.join(runsRoot, runId, "run.json");
   const current = readJson<Run>(runFile);

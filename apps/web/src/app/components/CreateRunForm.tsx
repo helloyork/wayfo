@@ -21,11 +21,20 @@ type PlanImportResponse = {
   summary: {
     rows: number;
     validRows: number;
-    importedRows: number;
-    skippedRows: number;
-    createdRuns: number;
+    activatedRows: number;
   };
   errors: Array<{ row: number; message: string }>;
+};
+
+type PlanRunResponse = {
+  timezone: string;
+  today: string;
+  summary: {
+    planRows: number;
+    createdRuns: number;
+    skippedExisting: number;
+    skippedSecondary: number;
+  };
 };
 
 export function CreateRunForm({
@@ -50,6 +59,11 @@ export function CreateRunForm({
     "warning"
   );
   const [planLoading, setPlanLoading] = useState(false);
+  const [planRunStatus, setPlanRunStatus] = useState<string | null>(null);
+  const [planRunStatusTone, setPlanRunStatusTone] = useState<"success" | "warning" | "danger">(
+    "warning"
+  );
+  const [planRunLoading, setPlanRunLoading] = useState(false);
 
   const fetchBrands = useCallback(async (mc: string) => {
     setBrandsLoading(true);
@@ -124,17 +138,14 @@ export function CreateRunForm({
       setPlanStatus("请先选择 Excel 文件");
       return;
     }
-    if (!marketContext.trim()) {
-      setPlanStatusTone("warning");
-      setPlanStatus("请先填写 Market Context");
-      return;
-    }
     setPlanLoading(true);
     setPlanStatus(null);
     try {
       const formData = new FormData();
       formData.append("file", planFile);
-      formData.append("marketContext", marketContext.trim());
+      if (marketContext.trim()) {
+        formData.append("marketContext", marketContext.trim());
+      }
       if (manufacturerId) {
         formData.append("manufacturerId", manufacturerId);
       }
@@ -150,7 +161,7 @@ export function CreateRunForm({
       const errorCount = payload.errors.length;
       setPlanStatusTone(errorCount > 0 ? "warning" : "success");
       setPlanStatus(
-        `导入完成：${payload.summary.importedRows} 行入库，${payload.summary.createdRuns} 个任务入队` +
+        `导入完成：${payload.summary.activatedRows} 行生效` +
           (errorCount > 0 ? `（${errorCount} 行有错误）` : "")
       );
       setPlanFile(null);
@@ -159,6 +170,41 @@ export function CreateRunForm({
       setPlanStatus(err instanceof Error ? err.message : "计划导入失败");
     } finally {
       setPlanLoading(false);
+    }
+  };
+
+  const onRunPlan = async () => {
+    if (!marketContext.trim()) {
+      setPlanRunStatusTone("warning");
+      setPlanRunStatus("请先填写 Market Context");
+      return;
+    }
+    setPlanRunLoading(true);
+    setPlanRunStatus(null);
+    try {
+      const res = await fetch(`${apiBase}/api/runs/plan-run`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          marketContext: marketContext.trim(),
+          manufacturerId: manufacturerId || undefined
+        })
+      });
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        throw new Error(err.message ?? "计划执行失败");
+      }
+      const payload = (await res.json()) as PlanRunResponse;
+      setPlanRunStatusTone("success");
+      setPlanRunStatus(
+        `执行完成：${payload.summary.createdRuns} 个任务入队，` +
+          `${payload.summary.skippedExisting} 个已处理跳过`
+      );
+    } catch (err) {
+      setPlanRunStatusTone("danger");
+      setPlanRunStatus(err instanceof Error ? err.message : "计划执行失败");
+    } finally {
+      setPlanRunLoading(false);
     }
   };
 
@@ -217,7 +263,7 @@ export function CreateRunForm({
 
       <div className="card stack">
         <strong>批量导入计划</strong>
-        <div className="muted">按设置页时区判断“当天”，仅当天行会入队执行。</div>
+        <div className="muted">上传计划仅覆盖保存，点击运行后才执行当天行。</div>
         <label className="stack">
           <span>Excel 文件</span>
           <input
@@ -237,7 +283,15 @@ export function CreateRunForm({
             onClick={onImportPlan}
             disabled={planLoading}
           >
-            {planLoading ? "导入中..." : "导入并入队"}
+            {planLoading ? "导入中..." : "导入覆盖"}
+          </button>
+          <button
+            className="btn"
+            type="button"
+            onClick={onRunPlan}
+            disabled={planRunLoading || !manufacturerId}
+          >
+            {planRunLoading ? "执行中..." : "运行计划"}
           </button>
         </div>
         {planStatus ? (
@@ -251,6 +305,19 @@ export function CreateRunForm({
             }`}
           >
             {planStatus}
+          </span>
+        ) : null}
+        {planRunStatus ? (
+          <span
+            className={`badge ${
+              planRunStatusTone === "success"
+                ? "badge-success"
+                : planRunStatusTone === "danger"
+                ? "badge-danger"
+                : "badge-warning"
+            }`}
+          >
+            {planRunStatus}
           </span>
         ) : null}
       </div>

@@ -22,7 +22,11 @@ import {
   updateJob,
   updateRun
 } from "../core/store/runStore";
-import { addProductGroupMembers, setProductGroupPrimaryAsin } from "../core/store/planStore";
+import {
+  addProductGroupMembers,
+  getPlanItemById,
+  setProductGroupPrimaryAsin
+} from "../core/store/planStore";
 import {
   getAppSettings,
   getHasDataApiKey,
@@ -1603,6 +1607,9 @@ async function runWayfairSubmit(run: Run) {
       timestamp: new Date().toISOString()
     });
 
+    const planItem = run.planItemId ? getPlanItemById(run.planItemId) : null;
+    const universalProductCode = planItem?.upc?.trim() || null;
+
     let request: WayfairSubmitProductAdditionsRequest;
     let answerResultsForArtifact: unknown;
     let selectedForArtifact: unknown;
@@ -1663,7 +1670,8 @@ async function runWayfairSubmit(run: Run) {
         questions,
         brandAssociations,
         mediaMetaDataTags: mediaTags,
-        manufacturerId: run.manufacturerId
+        manufacturerId: run.manufacturerId,
+        universalProductCode
       });
 
       request = sanitizeWayfairRequestAnswers(batchBuilt.request, questions);
@@ -1693,7 +1701,8 @@ async function runWayfairSubmit(run: Run) {
         mediaMetaDataTags: mediaTags,
         manufacturerId: run.manufacturerId,
         uploadedImageUrls,
-        rewrittenContent: rewrittenContents.get(mainAsin!) ?? null
+        rewrittenContent: rewrittenContents.get(mainAsin!) ?? null,
+        universalProductCode
       });
 
       request = sanitizeWayfairRequestAnswers(built.request, questions);
