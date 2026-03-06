@@ -34,7 +34,7 @@ if %errorlevel%==0 (
 echo Starting Wayfo service...
 call :start_service "%~2"
 
-timeout /t 1 /nobreak >nul
+call :wait_for_service
 :logs
 curl -N %SERVICE_URL%/logs/stream
 goto :eof
@@ -82,6 +82,19 @@ exit /b 1
 :is_running
 powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { iwr -UseBasicParsing -TimeoutSec 1 '%SERVICE_URL%/status' | Out-Null; exit 0 } catch { exit 1 }"
 exit /b %errorlevel%
+
+:wait_for_service
+set "WAIT_COUNT=0"
+:wait_for_service_loop
+call :is_running
+if %errorlevel%==0 exit /b 0
+set /a WAIT_COUNT+=1
+if %WAIT_COUNT% GEQ 20 (
+  echo Wayfo service did not start within 10 seconds.
+  exit /b 1
+)
+timeout /t 1 /nobreak >nul
+goto :wait_for_service_loop
 
 :start_service
 if /I "%~1"=="--dev" (
