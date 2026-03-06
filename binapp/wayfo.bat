@@ -55,7 +55,7 @@ if %errorlevel%==1 (
   echo Wayfo service is not running.
   exit /b 1
 )
-powershell -NoProfile -Command "Invoke-RestMethod -Method Post -Uri '%SERVICE_URL%/stop' | Out-Null"
+powershell -NoProfile -Command "$null = Invoke-RestMethod -Method Post -Uri '%SERVICE_URL%/stop'"
 echo Stop request sent.
 goto :eof
 
@@ -64,7 +64,7 @@ set "SERVICE_URL=http://127.0.0.1:3999"
 call :is_running
 if %errorlevel%==0 (
   echo Stopping Wayfo service...
-  powershell -NoProfile -Command "Invoke-RestMethod -Method Post -Uri '%SERVICE_URL%/stop' | Out-Null"
+  powershell -NoProfile -Command "$null = Invoke-RestMethod -Method Post -Uri '%SERVICE_URL%/stop'"
   timeout /t 1 /nobreak >nul
 )
 git pull
@@ -94,7 +94,7 @@ echo Usage: wayfo ^<launch^|stop^|update^|status^> [--dev]
 exit /b 1
 
 :is_running
-powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { iwr -UseBasicParsing -TimeoutSec 1 '%SERVICE_URL%/status' | Out-Null; exit 0 } catch { exit 1 }"
+powershell -NoProfile -Command "$ProgressPreference='SilentlyContinue'; try { $null = iwr -UseBasicParsing -TimeoutSec 1 '%SERVICE_URL%/status'; exit 0 } catch { exit 1 }"
 exit /b %errorlevel%
 
 :wait_for_service
