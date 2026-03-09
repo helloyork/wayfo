@@ -10,7 +10,6 @@
     "start:dev": "node dist/index.js --dev",
     "lint": "tsc -p tsconfig.json --noEmit"
   },
-  "dependencies": {},
   "devDependencies": {
     "@types/node": "^24.3.1",
     "tsx": "^4.20.5",
