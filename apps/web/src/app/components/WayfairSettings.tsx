@@ -2,6 +2,17 @@
 
 import { useEffect, useRef, useState } from "react";
 import { apiBase } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
 
 type WayfairEnv = "sandbox" | "prod";
 
@@ -22,10 +33,17 @@ type WayfairSettingsResponse = {
 };
 
 function defaultAudienceForEnv(env: WayfairEnv) {
-  // Per Wayfair developer docs:
-  // - Sandbox: https://sandbox.api.wayfair.com/
-  // - Prod: https://api.wayfair.com/
-  return env === "sandbox" ? "https://sandbox.api.wayfair.com/" : "https://api.wayfair.com/";
+  return env === "sandbox"
+    ? "https://sandbox.api.wayfair.com/"
+    : "https://api.wayfair.com/";
+}
+
+function badgeVariant(
+  tone: "success" | "warning" | "danger"
+): "success" | "warning" | "destructive" {
+  if (tone === "success") return "success";
+  if (tone === "danger") return "destructive";
+  return "warning";
 }
 
 export function WayfairSettings() {
@@ -36,21 +54,26 @@ export function WayfairSettings() {
   const [supplierId, setSupplierId] = useState("");
 
   const [maskedClientId, setMaskedClientId] = useState<string | null>(null);
-  const [maskedClientSecret, setMaskedClientSecret] = useState<string | null>(null);
+  const [maskedClientSecret, setMaskedClientSecret] = useState<string | null>(
+    null
+  );
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
-  const [sandboxSummary, setSandboxSummary] = useState<WayfairEnvSummary | null>(null);
+  const [sandboxSummary, setSandboxSummary] =
+    useState<WayfairEnvSummary | null>(null);
   const [prodSummary, setProdSummary] = useState<WayfairEnvSummary | null>(null);
 
   const [status, setStatus] = useState<string | null>(null);
-  const [statusTone, setStatusTone] = useState<"success" | "warning" | "danger">(
-    "warning"
-  );
+  const [statusTone, setStatusTone] = useState<
+    "success" | "warning" | "danger"
+  >("warning");
   const [loading, setLoading] = useState(false);
 
   const prevEnvRef = useRef<WayfairEnv>(env);
 
   const loadSettings = async () => {
-    const res = await fetch(`${apiBase}/api/settings/wayfair`, { cache: "no-store" });
+    const res = await fetch(`${apiBase}/api/settings/wayfair`, {
+      cache: "no-store",
+    });
     if (!res.ok) {
       return;
     }
@@ -59,7 +82,10 @@ export function WayfairSettings() {
     setSandboxSummary(payload.sandbox);
     setProdSummary(payload.prod);
 
-    const current = (payload.activeEnv ?? env) === "sandbox" ? payload.sandbox : payload.prod;
+    const current =
+      (payload.activeEnv ?? env) === "sandbox"
+        ? payload.sandbox
+        : payload.prod;
     setMaskedClientId(current.maskedClientId);
     setMaskedClientSecret(current.maskedClientSecret);
     setUpdatedAt(current.updatedAt);
@@ -116,7 +142,10 @@ export function WayfairSettings() {
       setStatus("clientId 与 clientSecret 需要同时填写");
       return;
     }
-    if (!currentSummary?.hasCredentials && (!trimmedClientId || !trimmedClientSecret)) {
+    if (
+      !currentSummary?.hasCredentials &&
+      (!trimmedClientId || !trimmedClientSecret)
+    ) {
       setStatusTone("warning");
       setStatus("请补全 clientId 与 clientSecret");
       return;
@@ -131,8 +160,8 @@ export function WayfairSettings() {
           clientId: trimmedClientId || undefined,
           clientSecret: trimmedClientSecret || undefined,
           audience,
-          supplierId
-        })
+          supplierId,
+        }),
       });
       if (!res.ok) {
         throw new Error("保存失败");
@@ -156,7 +185,7 @@ export function WayfairSettings() {
       const res = await fetch(`${apiBase}/api/settings/wayfair`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ activeEnv: newEnv })
+        body: JSON.stringify({ activeEnv: newEnv }),
       });
       if (!res.ok) {
         const payload = (await res.json()) as { message?: string };
@@ -164,7 +193,9 @@ export function WayfairSettings() {
       }
       await loadSettings();
       setStatusTone("success");
-      setStatus(`已切换到 ${newEnv === "sandbox" ? "Sandbox（沙盒）" : "Production（生产）"}`);
+      setStatus(
+        `已切换到 ${newEnv === "sandbox" ? "Sandbox（沙盒）" : "Production（生产）"}`
+      );
     } catch (error) {
       await loadSettings();
       setStatusTone("danger");
@@ -184,12 +215,12 @@ export function WayfairSettings() {
         audience,
         supplierId,
         ...(trimmedClientId ? { clientId: trimmedClientId } : {}),
-        ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {})
+        ...(trimmedClientSecret ? { clientSecret: trimmedClientSecret } : {}),
       };
       const res = await fetch(`${apiBase}/api/settings/wayfair/validate`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body)
+        body: JSON.stringify(body),
       });
       if (!res.ok) {
         const payload = (await res.json()) as { message?: string };
@@ -197,7 +228,11 @@ export function WayfairSettings() {
       }
       const payload = (await res.json()) as { expiresAt?: string };
       setStatusTone("success");
-      setStatus(payload.expiresAt ? `Wayfair token 获取成功（有效期至 ${payload.expiresAt}）` : "Wayfair token 获取成功");
+      setStatus(
+        payload.expiresAt
+          ? `Wayfair token 获取成功（有效期至 ${payload.expiresAt}）`
+          : "Wayfair token 获取成功"
+      );
       await loadSettings();
     } catch (error) {
       setStatusTone("danger");
@@ -207,95 +242,98 @@ export function WayfairSettings() {
     }
   };
 
+  const selectClassName =
+    "flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50";
+
   return (
-    <div className="card stack">
-      <strong>Wayfair 凭据</strong>
-      <div className="muted">填写并切换 API 目的地（沙盒/生产），用于获取 token 与后续 GraphQL 调用。</div>
+    <Card className="shadow-sm">
+      <CardHeader>
+        <CardTitle>Wayfair 凭据</CardTitle>
+        <CardDescription>
+          填写并切换 API 目的地（沙盒/生产），用于获取 token 与后续 GraphQL 调用。
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="wayfair-env">当前环境</Label>
+          <select
+            id="wayfair-env"
+            className={selectClassName}
+            value={env}
+            onChange={(event) => onEnvChange(event.target.value as WayfairEnv)}
+            disabled={loading}
+          >
+            <option value="sandbox">Sandbox（沙盒）</option>
+            <option value="prod">Production（生产）</option>
+          </select>
+        </div>
 
-      <label className="stack">
-        <span className="muted">当前环境</span>
-        <select
-          className="input"
-          value={env}
-          onChange={(event) => onEnvChange(event.target.value as WayfairEnv)}
-          disabled={loading}
-        >
-          <option value="sandbox">Sandbox（沙盒）</option>
-          <option value="prod">Production（生产）</option>
-        </select>
-      </label>
+        <div className="flex flex-wrap gap-2 text-sm text-muted-foreground">
+          <span>Sandbox：{sandboxSummary?.hasCredentials ? "已配置" : "未配置"}</span>
+          <span>Production：{prodSummary?.hasCredentials ? "已配置" : "未配置"}</span>
+        </div>
 
-      <div className="row muted" style={{ gap: 10 }}>
-        <span>Sandbox：{sandboxSummary?.hasCredentials ? "已配置" : "未配置"}</span>
-        <span>Production：{prodSummary?.hasCredentials ? "已配置" : "未配置"}</span>
-      </div>
-
-      <label className="stack">
-        <span className="muted">App ID（clientId）</span>
-        <input
-          className="input"
-          type="password"
-          value={clientId}
-          onChange={(event) => setClientId(event.target.value)}
-          placeholder={maskedClientId ? `已保存 ${maskedClientId}` : "输入 clientId"}
-        />
-      </label>
-
-      <label className="stack">
-        <span className="muted">密钥（clientSecret）</span>
-        <input
-          className="input"
-          type="password"
-          value={clientSecret}
-          onChange={(event) => setClientSecret(event.target.value)}
-          placeholder={maskedClientSecret ? `已保存 ${maskedClientSecret}` : "输入 clientSecret"}
-        />
-      </label>
-
-      <label className="stack">
-        <span className="muted">Audience</span>
-        <input
-          className="input"
-          value={audience}
-          onChange={(event) => setAudience(event.target.value)}
-          placeholder={defaultAudienceForEnv(env)}
-        />
-      </label>
-
-      <label className="stack">
-        <span className="muted">Supplier ID</span>
-        <input
-          className="input"
-          value={supplierId}
-          onChange={(event) => setSupplierId(event.target.value)}
-          placeholder="输入唯一 supplierId"
-        />
-      </label>
-
-      <div className="row">
-        <button className="btn" type="button" onClick={onSave} disabled={loading}>
-          保存
-        </button>
-        <button className="btn" type="button" onClick={onValidate} disabled={loading}>
-          验证并获取 token
-        </button>
-        {updatedAt ? <span className="muted">更新于 {updatedAt}</span> : null}
-      </div>
-
-      {status ? (
-        <span
-          className={`badge ${
-            statusTone === "success"
-              ? "badge-success"
-              : statusTone === "danger"
-              ? "badge-danger"
-              : "badge-warning"
-          }`}
-        >
-          {status}
-        </span>
-      ) : null}
-    </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="wayfair-client">App ID（clientId）</Label>
+          <Input
+            id="wayfair-client"
+            type="password"
+            value={clientId}
+            onChange={(e) => setClientId(e.target.value)}
+            placeholder={
+              maskedClientId ? `已保存 ${maskedClientId}` : "输入 clientId"
+            }
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="wayfair-secret">密钥（clientSecret）</Label>
+          <Input
+            id="wayfair-secret"
+            type="password"
+            value={clientSecret}
+            onChange={(e) => setClientSecret(e.target.value)}
+            placeholder={
+              maskedClientSecret
+                ? `已保存 ${maskedClientSecret}`
+                : "输入 clientSecret"
+            }
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="wayfair-audience">Audience</Label>
+          <Input
+            id="wayfair-audience"
+            value={audience}
+            onChange={(e) => setAudience(e.target.value)}
+            placeholder={defaultAudienceForEnv(env)}
+          />
+        </div>
+        <div className="flex flex-col gap-2">
+          <Label htmlFor="wayfair-supplier">Supplier ID</Label>
+          <Input
+            id="wayfair-supplier"
+            value={supplierId}
+            onChange={(e) => setSupplierId(e.target.value)}
+            placeholder="输入唯一 supplierId"
+          />
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" onClick={onSave} disabled={loading}>
+            保存
+          </Button>
+          <Button type="button" onClick={onValidate} disabled={loading}>
+            验证并获取 token
+          </Button>
+          {updatedAt ? (
+            <span className="text-sm text-muted-foreground">
+              更新于 {updatedAt}
+            </span>
+          ) : null}
+        </div>
+        {status ? (
+          <Badge variant={badgeVariant(statusTone)}>{status}</Badge>
+        ) : null}
+      </CardContent>
+    </Card>
   );
 }
-

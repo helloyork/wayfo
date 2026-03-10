@@ -2,9 +2,9 @@
 
 const fs = require("fs");
 const { spawn } = require("child_process");
-const { LOG_FILE, LOG_ERR_FILE } = require("./constants");
+const { LOG_FILE, LOG_ERR_FILE, SERVER_URL, WEB_URL } = require("./constants");
 const { log } = require("./logger");
-const { isRunning, isChildrenHealthy } = require("./health");
+const { isRunning, isChildrenHealthy, getChildrenHealthStatus } = require("./health");
 const { delay, tailFile } = require("./fs-utils");
 
 function startService(isDev) {
@@ -41,12 +41,17 @@ async function waitForServiceStop() {
   process.exit(1);
 }
 
-async function waitForChildrenHealthy() {
-  for (let i = 0; i < 60; i += 1) {
+async function waitForChildrenHealthy(isDev) {
+  // Dev mode: Next.js compilation can take 30-60s. Prod: usually 10-20s.
+  const maxWait = isDev ? 90 : 45;
+  for (let i = 0; i < maxWait; i += 1) {
     if (await isChildrenHealthy()) return;
     await delay(1000);
   }
-  log("Server or web app did not become healthy within 60 seconds.");
+  const status = await getChildrenHealthStatus();
+  log(`Server or web app did not become healthy within ${maxWait} seconds.`);
+  log(`Server (${SERVER_URL}): ${status.server.ok ? "OK" : status.server.error ?? "status " + (status.server.status ?? "?")}`);
+  log(`Web (${WEB_URL}): ${status.web.ok ? "OK" : status.web.error ?? "status " + (status.web.status ?? "?")}`);
   showStartError();
   process.exit(1);
 }

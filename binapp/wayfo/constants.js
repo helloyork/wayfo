@@ -4,7 +4,7 @@ const os = require("os");
 const path = require("path");
 
 const SERVICE_URL = "http://127.0.0.1:3999";
-const SERVER_URL = "http://127.0.0.1:4000/status";
+const SERVER_URL = "http://127.0.0.1:4000/api/health";
 const WEB_URL = "http://127.0.0.1:3000";
 const LOG_FILE = path.join(os.tmpdir(), "wayfo-service.log");
 const LOG_ERR_FILE = path.join(os.tmpdir(), "wayfo-service.err.log");

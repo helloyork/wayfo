@@ -4,6 +4,27 @@ import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { apiBase } from "../../lib/api";
 import { CreateRunForm } from "./CreateRunForm";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Label } from "@/components/ui/label";
+import { Badge } from "@/components/ui/badge";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  DEFAULT_MARKET_CONTEXT,
+  MARKET_CONTEXT_PRESETS,
+} from "@/lib/marketContext";
 
 type InitStatus = {
   ready: boolean;
@@ -29,11 +50,6 @@ type InitStatus = {
 };
 
 const storageKey = "wayfo.marketContext";
-const sampleMarketContext = JSON.stringify(
-  { locale: "en-US", country: "UNITED_STATES", brand: "WAYFAIR" },
-  null,
-  0
-);
 
 function percent(page?: number, total?: number) {
   if (!page || !total || total <= 0) {
@@ -44,7 +60,7 @@ function percent(page?: number, total?: number) {
 }
 
 export function RunEntryGate() {
-  const [marketContext, setMarketContext] = useState("");
+  const [marketContext, setMarketContext] = useState(DEFAULT_MARKET_CONTEXT);
   const [status, setStatus] = useState<InitStatus | null>(null);
   const [loading, setLoading] = useState(false);
   const pollRef = useRef<number | null>(null);
@@ -69,7 +85,21 @@ export function RunEntryGate() {
   useEffect(() => {
     const stored =
       typeof window !== "undefined" ? window.localStorage.getItem(storageKey) : null;
-    setMarketContext(stored?.trim() ? stored : sampleMarketContext);
+    const raw = stored?.trim() ?? "";
+    if (!raw) {
+      setMarketContext(DEFAULT_MARKET_CONTEXT);
+      return;
+    }
+    const match = MARKET_CONTEXT_PRESETS.find((p) => {
+      try {
+        const a = JSON.parse(p.value) as { locale: string; country: string; brand: string };
+        const b = JSON.parse(raw) as { locale?: string; country?: string; brand?: string };
+        return a.locale === b.locale && a.country === b.country && a.brand === b.brand;
+      } catch {
+        return p.value === raw;
+      }
+    });
+    setMarketContext(match?.value ?? DEFAULT_MARKET_CONTEXT);
   }, []);
 
   useEffect(() => {
@@ -127,88 +157,103 @@ export function RunEntryGate() {
   if (!status || !status.ready) {
     const pct = percent(status?.task?.page, status?.task?.totalPages);
     return (
-      <div className="card stack">
-        <div className="row">
-          <strong>初始化</strong>
-          <span className="muted">首次使用需要先初始化 taxonomy</span>
-        </div>
-
-        <div className="muted">
-          前置条件：
-          {" "}
-          <span>
-            Wayfair 凭据 {status?.prerequisites.wayfair ? "✅" : "❌"}
-          </span>
-          {status?.activeEnv ? <span>{" · "}当前环境 {status.activeEnv}</span> : null}
-          {" · "}
-          <Link className="muted" href="/settings">
-            去设置页
-          </Link>
-        </div>
-
-        <label className="stack">
-          <span className="muted">Market Context</span>
-          <textarea
-            className="input"
-            style={{ minHeight: 86, fontFamily: "ui-monospace, SFMono-Regular, Menlo, monospace" }}
-            value={marketContext}
-            onChange={(e) => onMarketContextChange(e.target.value)}
-            placeholder={sampleMarketContext}
-          />
-          {!status?.marketContextValid ? (
-            <span className="muted">
-              格式示例：{sampleMarketContext}
+      <Card className="shadow-sm">
+        <CardHeader>
+          <CardTitle>初始化</CardTitle>
+          <CardDescription>首次使用需要先初始化 taxonomy</CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-4">
+          <div className="text-sm text-muted-foreground">
+            前置条件：
+            <span>
+              Wayfair 凭据 {status?.prerequisites.wayfair ? "✅" : "❌"}
             </span>
-          ) : null}
-        </label>
-
-        <div className="row">
-          <button
-            className="btn"
-            type="button"
-            onClick={onStartInit}
-            disabled={
-              loading ||
-              !status?.prerequisites.wayfair ||
-              !status?.marketContextValid ||
-              status?.task?.status === "RUNNING"
-            }
-          >
-            {status?.task?.status === "RUNNING" ? "初始化进行中..." : "开始初始化"}
-          </button>
-          <span className="muted">
-            状态：{status?.taxonomy.state ?? "MISSING"}
-            {status?.taxonomy.expiresAt ? `（过期时间 ${status.taxonomy.expiresAt}）` : ""}
-          </span>
-        </div>
-
-        {status?.task ? (
-          <div className="stack" style={{ gap: 10 }}>
-            <div className="row">
-              <span className="muted">
-                {status.task.phase ?? "INIT"}：{status.task.message ?? ""}
-              </span>
-              {pct !== null ? <span className="muted">{pct}%</span> : null}
-            </div>
-            {status.task.status === "FAILED" ? (
-              <span className="badge badge-danger">
-                {status.task.error ?? "初始化失败"}
-              </span>
-            ) : status.task.status === "SUCCEEDED" ? (
-              <span className="badge badge-success">初始化完成</span>
-            ) : (
-              <span className="badge badge-warning">初始化中</span>
-            )}
+            {status?.activeEnv ? (
+              <span> · 当前环境 {status.activeEnv}</span>
+            ) : null}
+            {" · "}
+            <Link href="/settings" className="text-primary hover:underline">
+              去设置页
+            </Link>
           </div>
-        ) : null}
 
-        {status?.taxonomy.lastRefreshError ? (
-          <span className="badge badge-warning">{status.taxonomy.lastRefreshError}</span>
-        ) : null}
-      </div>
+          <div className="flex flex-col gap-2">
+            <Label className="text-muted-foreground">Market Context</Label>
+            <Select
+              value={marketContext}
+              onValueChange={(value) => onMarketContextChange(value)}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder="选择市场" />
+              </SelectTrigger>
+              <SelectContent>
+                {MARKET_CONTEXT_PRESETS.map((preset) => (
+                  <SelectItem key={preset.value} value={preset.value}>
+                    {preset.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {!status?.marketContextValid ? (
+              <span className="text-sm text-muted-foreground">
+                请从下拉框选择有效的 Market Context
+              </span>
+            ) : null}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <Button
+              type="button"
+              onClick={onStartInit}
+              disabled={
+                loading ||
+                !status?.prerequisites.wayfair ||
+                !status?.marketContextValid ||
+                status?.task?.status === "RUNNING"
+              }
+            >
+              {status?.task?.status === "RUNNING" ? "初始化进行中..." : "开始初始化"}
+            </Button>
+            <span className="text-sm text-muted-foreground">
+              状态：{status?.taxonomy.state ?? "MISSING"}
+              {status?.taxonomy.expiresAt
+                ? `（过期时间 ${status.taxonomy.expiresAt}）`
+                : ""}
+            </span>
+          </div>
+
+          {status?.task ? (
+            <div className="flex flex-col gap-2">
+              <div className="flex flex-wrap items-center gap-2 text-sm text-muted-foreground">
+                <span>
+                  {status.task.phase ?? "INIT"}：{status.task.message ?? ""}
+                </span>
+                {pct !== null ? <span>{pct}%</span> : null}
+              </div>
+              {status.task.status === "FAILED" ? (
+                <Badge variant="destructive">
+                  {status.task.error ?? "初始化失败"}
+                </Badge>
+              ) : status.task.status === "SUCCEEDED" ? (
+                <Badge variant="success">初始化完成</Badge>
+              ) : (
+                <Badge variant="warning">初始化中</Badge>
+              )}
+            </div>
+          ) : null}
+
+          {status?.taxonomy.lastRefreshError ? (
+            <Badge variant="warning">{status.taxonomy.lastRefreshError}</Badge>
+          ) : null}
+        </CardContent>
+      </Card>
     );
   }
 
-  return <CreateRunForm initialMarketContext={marketContext} onMarketContextChange={onMarketContextChange} />;
+  return (
+    <CreateRunForm
+      initialMarketContext={marketContext}
+      onMarketContextChange={onMarketContextChange}
+    />
+  );
 }
-

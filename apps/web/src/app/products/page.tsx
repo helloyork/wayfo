@@ -29,13 +29,18 @@ export default async function ProductsPage() {
   const products = await fetchJson<ProductSummary[]>("/api/products");
 
   return (
-    <div className="stack">
-      <div className="row">
-        <div className="page-header">
-          <h2>产品总览</h2>
-          <div className="muted">按 ASIN 汇总展示全部产品</div>
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h2 className="text-2xl font-semibold tracking-tight">产品总览</h2>
+          <p className="text-sm text-muted-foreground">
+            按 ASIN 汇总展示全部产品
+          </p>
         </div>
-        <Link className="muted" href="/runs">
+        <Link
+          href="/runs"
+          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+        >
           查看 Runs
         </Link>
       </div>

@@ -29,8 +29,9 @@
     "packages/*"
   ],
   "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "author": "Nomen <https://github.com/helloyork>",
+  "license": "MIT",
+  "repository": "https://github.com/helloyork/wayfo",
   "devDependencies": {
     "@types/node": "^24.3.1",
     "concurrently": "^9.2.0",

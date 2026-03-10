@@ -118,16 +118,25 @@ function formatDateKeyInTimeZone(date: Date, timeZone: string) {
   return `${year}-${month}-${day}`;
 }
 
-function parsePlanDate(value: unknown): { raw: string; key: string } | null {
-  if (!value) {
+function parsePlanDate(value: unknown, timeZone: string): { raw: string; key: string } | null {
+  if (value === null || value === undefined) {
     return null;
   }
   if (value instanceof Date) {
-    const year = value.getFullYear();
-    const month = String(value.getMonth() + 1).padStart(2, "0");
-    const day = String(value.getDate()).padStart(2, "0");
-    const raw = `${month}-${day}-${year}`;
-    return { raw, key: `${year}-${month}-${day}` };
+    const key = formatDateKeyInTimeZone(value, timeZone);
+    const [y, m, d] = key.split("-");
+    const raw = `${m}-${d}-${y}`;
+    return { raw, key };
+  }
+  // Excel stores dates as serial numbers (days since 1900-01-01)
+  // Use app timezone to format - avoids off-by-one when Excel interprets dates in user's locale
+  const num = typeof value === "number" ? value : Number((value as { text?: string }).text ?? value);
+  if (Number.isFinite(num) && num >= 1 && num < 300000) {
+    const jsDate = new Date((num - 25569) * 86400 * 1000);
+    const key = formatDateKeyInTimeZone(jsDate, timeZone);
+    const [y, m, d] = key.split("-");
+    const raw = `${m}-${d}-${y}`;
+    return { raw, key };
   }
   const raw = String((value as { text?: string }).text ?? value).trim();
   if (!raw) {
@@ -209,6 +218,38 @@ function normalizeReviewRequest(
 function readCellText(cell: { text?: string; value?: unknown }) {
   return String(cell.text ?? cell.value ?? "").trim();
 }
+
+function addDaysToDateKey(dateKey: string, days: number): string {
+  const [y, m, d] = dateKey.split("-").map(Number);
+  const date = new Date(y, m - 1, d);
+  date.setDate(date.getDate() + days);
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+runsRouter.get("/plan-preview", (_req, res) => {
+  const settings = getAppSettings();
+  const timezone = settings.timezone ?? "UTC";
+  const todayKey = formatDateKeyInTimeZone(new Date(), timezone);
+  const daysBefore = 1;
+  const daysAfter = 3;
+  const dates: string[] = [];
+  for (let i = -daysBefore; i <= daysAfter; i++) {
+    dates.push(addDaysToDateKey(todayKey, i));
+  }
+  const itemsByDate: Record<string, ReturnType<typeof listActivePlanItemsByDate>> = {};
+  for (const d of dates) {
+    itemsByDate[d] = listActivePlanItemsByDate(d);
+  }
+  res.json({
+    timezone,
+    today: todayKey,
+    dates,
+    itemsByDate
+  });
+});
 
 runsRouter.get("/plan-template", async (_req, res) => {
   const workbook = new ExcelJS.Workbook();
@@ -314,7 +355,7 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
       continue;
     }
 
-    const parsedDate = parsePlanDate(planDateCell.value);
+    const parsedDate = parsePlanDate(planDateCell.value, timezone);
     if (!parsedDate) {
       errors.push({ row: rowNumber, message: "时间格式错误，应为 MM-DD-YYYY" });
       continue;
@@ -365,6 +406,17 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     }
   }
 
+  const daysBefore = 1;
+  const daysAfter = 3;
+  const dates: string[] = [];
+  for (let i = -daysBefore; i <= daysAfter; i++) {
+    dates.push(addDaysToDateKey(todayKey, i));
+  }
+  const itemsByDate: Record<string, ReturnType<typeof listActivePlanItemsByDate>> = {};
+  for (const d of dates) {
+    itemsByDate[d] = listActivePlanItemsByDate(d);
+  }
+
   res.json({
     timezone,
     today: todayKey,
@@ -373,7 +425,9 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
       validRows: validCount,
       activatedRows: activatedCount
     },
-    errors
+    errors,
+    dates,
+    itemsByDate
   });
 });
 

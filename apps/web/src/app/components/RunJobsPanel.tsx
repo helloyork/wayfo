@@ -2,6 +2,14 @@
 
 import { useCallback, useEffect, useState } from "react";
 import { apiBase } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type RunJob = {
   id: string;
@@ -23,7 +31,9 @@ export function RunJobsPanel({ runId, initialJobs }: RunJobsPanelProps) {
   const refresh = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`${apiBase}/api/runs/${runId}`, { cache: "no-store" });
+      const res = await fetch(`${apiBase}/api/runs/${runId}`, {
+        cache: "no-store",
+      });
       if (!res.ok) {
         return;
       }
@@ -47,29 +57,52 @@ export function RunJobsPanel({ runId, initialJobs }: RunJobsPanelProps) {
   }, [refresh]);
 
   return (
-    <div className="card stack">
-      <div className="row">
-        <strong>Jobs</strong>
-        <button className="btn" type="button" onClick={refresh} disabled={loading}>
-          刷新
-        </button>
-        {lastUpdated ? <span className="muted">更新于 {lastUpdated}</span> : null}
-      </div>
-      {jobs.length === 0 ? (
-        <div className="empty">暂无 Job</div>
-      ) : (
-        <div className="list">
-          {jobs.map((job) => (
-            <div key={job.id} className="list-item">
-              <div className="row">
-                <span className="badge">{job.status}</span>
-                <span>{job.step}</span>
-              </div>
-              <div className="muted">重试次数: {job.attempts}</div>
-            </div>
-          ))}
+    <Card className="shadow-sm">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <CardTitle>Jobs</CardTitle>
+          <div className="flex items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={refresh}
+              disabled={loading}
+            >
+              刷新
+            </Button>
+            {lastUpdated ? (
+              <span className="text-sm text-muted-foreground">
+                更新于 {lastUpdated}
+              </span>
+            ) : null}
+          </div>
         </div>
-      )}
-    </div>
+      </CardHeader>
+      <CardContent>
+        {jobs.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
+            暂无 Job
+          </div>
+        ) : (
+          <div className="flex flex-col gap-3">
+            {jobs.map((job) => (
+              <div
+                key={job.id}
+                className="flex flex-col gap-1 rounded-lg border border-border bg-muted/30 p-4"
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="secondary">{job.status}</Badge>
+                  <span className="font-medium">{job.step}</span>
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  重试次数: {job.attempts}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

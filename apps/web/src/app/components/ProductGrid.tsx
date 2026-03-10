@@ -20,16 +20,20 @@ type ProductSummary = {
 };
 
 export function ProductGrid({
-  products
+  products,
 }: {
   products: ProductSummary[];
 }) {
   if (products.length === 0) {
-    return <div className="empty">暂无产品数据</div>;
+    return (
+      <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-12 text-center text-sm text-muted-foreground">
+        暂无产品数据
+      </div>
+    );
   }
 
   return (
-    <div className="product-grid">
+    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
       {products.map((product) => (
         <ProductCard key={product.asin} product={product} />
       ))}

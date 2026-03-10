@@ -61,12 +61,17 @@ export default async function ProductDetailPage({
   const detail = await fetchJson<ProductResponse>(`/api/products/${params.asin}`);
 
   return (
-    <div className="stack">
-      <div className="row">
-        <Link href="/products">返回产品列表</Link>
-        <div className="muted">
+    <div className="flex flex-col gap-6">
+      <div className="flex flex-wrap items-center justify-between gap-4">
+        <Link
+          href="/products"
+          className="text-sm text-primary hover:underline"
+        >
+          返回产品列表
+        </Link>
+        <span className="text-sm text-muted-foreground">
           来源 Run: {detail.runId} · 状态: {detail.runStatus}
-        </div>
+        </span>
       </div>
       <ProductDetail
         runId={detail.runId}

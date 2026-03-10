@@ -1,5 +1,11 @@
 import Link from "next/link";
 import { apiBase } from "../../lib/api";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+} from "@/components/ui/card";
 
 type ProductSummary = {
   asin: string;
@@ -28,28 +34,38 @@ function formatPrice(price?: ProductSummary["price"]) {
   return `${symbol}${price.current.toFixed(2)}`;
 }
 
-export function ProductCard({
-  product
-}: {
-  product: ProductSummary;
-}) {
+export function ProductCard({ product }: { product: ProductSummary }) {
   const imageSrc = product.imageName
     ? `${apiBase}/api/runs/${product.runId}/images/${product.asin}/${encodeURIComponent(product.imageName)}`
     : product.imageUrl;
 
   return (
-    <Link href={`/products/${product.asin}`} className="card product-card">
-      {imageSrc ? (
-        <img className="product-image" src={imageSrc} alt={product.title} />
-      ) : (
-        <div className="empty">暂无图片</div>
-      )}
-      <div className="product-title">{product.title}</div>
-      <div className="product-price">{formatPrice(product.price)}</div>
-      <div className="product-meta">
-        {product.brand ? product.brand : "未提供品牌"} ·{" "}
-        {product.availability?.isAvailable ? "有货" : "无货"}
-      </div>
+    <Link href={`/products/${product.asin}`}>
+      <Card className="overflow-hidden shadow-sm transition-shadow hover:shadow">
+        <CardHeader className="p-0">
+          <div className="aspect-square w-full overflow-hidden bg-muted/50">
+            {imageSrc ? (
+              <img
+                className="h-full w-full object-contain p-4"
+                src={imageSrc}
+                alt={product.title}
+              />
+            ) : (
+              <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+                暂无图片
+              </div>
+            )}
+          </div>
+        </CardHeader>
+        <CardContent className="flex flex-col gap-1 p-4">
+          <p className="line-clamp-2 font-medium">{product.title}</p>
+          <p className="text-lg font-bold">{formatPrice(product.price)}</p>
+          <CardDescription>
+            {product.brand ? product.brand : "未提供品牌"} ·{" "}
+            {product.availability?.isAvailable ? "有货" : "无货"}
+          </CardDescription>
+        </CardContent>
+      </Card>
     </Link>
   );
 }

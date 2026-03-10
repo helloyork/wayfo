@@ -1,6 +1,7 @@
 import http from "http";
+import os from "os";
 import path from "path";
-import { spawn, ChildProcessWithoutNullStreams } from "child_process";
+import { spawn, execSync, ChildProcessWithoutNullStreams } from "child_process";
 import readline from "readline";
 import { URL } from "url";
 
@@ -20,6 +21,7 @@ const rootDir = path.resolve(__dirname, "..", "..", "..");
 let serverProc: ChildProcessWithoutNullStreams | null = null;
 let webProc: ChildProcessWithoutNullStreams | null = null;
 let shuttingDown = false;
+const startedAt = new Date().toISOString();
 
 const logBuffer: LogEntry[] = [];
 const sseClients = new Set<http.ServerResponse>();
@@ -80,18 +82,34 @@ function startChildren() {
   }
 }
 
+function killProcessTree(proc: ChildProcessWithoutNullStreams) {
+  const pid = proc.pid;
+  if (pid == null) return;
+  try {
+    if (process.platform === "win32") {
+      // On Windows, proc.kill() does not terminate child processes spawned via shell.
+      // Use taskkill /F /T to kill the process tree.
+      execSync(`taskkill /F /T /PID ${pid}`, { stdio: "ignore" });
+    } else {
+      proc.kill("SIGTERM");
+      setTimeout(() => {
+        if (!proc.killed) {
+          proc.kill("SIGKILL");
+        }
+      }, 5000);
+    }
+  } catch {
+    // Process may already be dead
+  }
+}
+
 function stopChildren() {
   const children = [serverProc, webProc].filter(
     (proc): proc is ChildProcessWithoutNullStreams => Boolean(proc)
   );
 
   for (const proc of children) {
-    proc.kill();
-    setTimeout(() => {
-      if (!proc.killed) {
-        proc.kill("SIGKILL");
-      }
-    }, 5000);
+    killProcessTree(proc);
   }
   serverProc = null;
   webProc = null;
@@ -103,9 +121,26 @@ function json(res: http.ServerResponse, status: number, data: object) {
 }
 
 function handleStatus(res: http.ServerResponse) {
+  const mem = process.memoryUsage();
+  const totalMem = os.totalmem();
+  const freeMem = os.freemem();
   json(res, 200, {
     running: true,
     mode,
+    servicePid: process.pid,
+    startedAt,
+    memory: {
+      service: {
+        rss: mem.rss,
+        heapUsed: mem.heapUsed,
+        heapTotal: mem.heapTotal,
+      },
+      system: {
+        total: totalMem,
+        free: freeMem,
+        used: totalMem - freeMem,
+      },
+    },
     children: {
       serverPid: serverProc?.pid ?? null,
       webPid: webProc?.pid ?? null,

@@ -6,12 +6,14 @@ import { RunDefaultsSettings } from "../components/RunDefaultsSettings";
 
 export default function SettingsPage() {
   return (
-    <div className="stack">
-      <div className="page-header">
-        <h2>设置</h2>
-        <div className="muted">连接器与默认配置</div>
+    <div className="flex flex-col gap-6">
+      <div>
+        <h2 className="text-2xl font-semibold tracking-tight">设置</h2>
+        <p className="text-sm text-muted-foreground">
+          连接器与默认配置
+        </p>
       </div>
-      <div className="grid-2">
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2">
         <HasDataSettings />
         <OpenAiSettings />
         <R2Settings />

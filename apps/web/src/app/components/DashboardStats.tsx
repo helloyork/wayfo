@@ -1,3 +1,11 @@
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+
 type StatItem = {
   label: string;
   value: string;
@@ -6,20 +14,24 @@ type StatItem = {
 
 export function DashboardStats({ items }: { items: StatItem[] }) {
   return (
-    <div className="card stack">
-      <div className="row">
-        <strong>概览</strong>
-        <span className="muted">本地运行与任务概况</span>
-      </div>
-      <div className="grid-3">
-        {items.map((item) => (
-          <div key={item.label} className="stat">
-            <span className="stat-label">{item.label}</span>
-            <span className="stat-value">{item.value}</span>
-            {item.hint ? <span className="muted">{item.hint}</span> : null}
-          </div>
-        ))}
-      </div>
-    </div>
+    <Card className="shadow-sm">
+      <CardHeader className="pb-2">
+        <CardTitle>概览</CardTitle>
+        <CardDescription>本地运行与任务概况</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-3">
+          {items.map((item) => (
+            <div key={item.label} className="flex flex-col gap-1">
+              <span className="text-sm text-muted-foreground">{item.label}</span>
+              <span className="text-2xl font-semibold">{item.value}</span>
+              {item.hint ? (
+                <span className="text-sm text-muted-foreground">{item.hint}</span>
+              ) : null}
+            </div>
+          ))}
+        </div>
+      </CardContent>
+    </Card>
   );
 }

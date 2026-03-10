@@ -2,6 +2,23 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBase } from "../../lib/api";
+import { Button } from "@/components/ui/button";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { Loader2, ChevronDown, ChevronRight, CheckCircle2 } from "lucide-react";
+import { motion } from "motion/react";
 
 type Submission = {
   requestId: string;
@@ -317,6 +334,14 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
     isDirtyRef.current = true;
   };
 
+  const applySuggestion = (suggestion: RepairSuggestion) => {
+    if (!suggestion.repairable || !suggestion.suggestedValues?.length) return;
+    const question = flattenQuestions(questions).find((q) => q.id === suggestion.questionId);
+    if (question) {
+      updateAnswerForQuestion(question, suggestion.suggestedValues);
+    }
+  };
+
   const questionRows = flattenQuestions(questions)
     .filter((question) => question.isActive !== false)
     .map((question) => {
@@ -341,150 +366,319 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
       return aFailed ? -1 : 1;
     });
 
+  const inputClassName = (failed: boolean) =>
+    `flex w-full min-w-0 rounded-md border px-3 py-1 text-sm font-mono shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
+      failed ? "border-destructive" : "border-input"
+    }`;
+
+  const hasFlaws = flaws.length > 0;
+  const hasSuggestions = (suggestions?.length ?? 0) > 0;
+
   return (
-    <div className="card stack">
-      <div className="row">
-        <strong>Wayfair 审查与修复</strong>
-        <div className="row" style={{ gap: 8 }}>
-          <button type="button" className="btn" onClick={loadData} disabled={loading}>
-            刷新
-          </button>
-          <button type="button" className="btn" onClick={handleSaveDraft} disabled={loading || saving}>
-            保存草稿
-          </button>
-          <button type="button" className="btn" onClick={handleSubmit} disabled={loading || submitting}>
-            {submitting ? (
-              <>
-                <span className="spinner" aria-hidden="true" />
-                提交中
-              </>
-            ) : (
-              "提交修正"
+    <Card className="shadow-sm overflow-hidden">
+      <CardHeader className="pb-4">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <CardTitle>Wayfair 审查与修复</CardTitle>
+            <p className="mt-1 text-sm text-muted-foreground">
+              {hasFlaws
+                ? "存在验证问题，请查看下方详情并修正后提交"
+                : "检查并修正后提交至 Wayfair"}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={loadData}
+              disabled={loading}
+            >
+              刷新
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              onClick={handleSaveDraft}
+              disabled={loading || saving}
+            >
+              {saving ? "保存中…" : "保存草稿"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={handleSubmit}
+              disabled={loading || submitting}
+            >
+              {submitting ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  提交中
+                </>
+              ) : (
+                "提交修正"
+              )}
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-5">
+        {loading ? (
+          <div className="text-sm text-muted-foreground">加载中...</div>
+        ) : null}
+
+        <div className="flex flex-wrap items-center gap-3">
+          {error ? (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+            >
+              <Badge variant="destructive">{error}</Badge>
+            </motion.div>
+          ) : null}
+          {submitStatus ? (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {submitStatus}
+            </motion.div>
+          ) : null}
+          {draftStatus ? (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2 }}
+              className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400"
+            >
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              {draftStatus}
+            </motion.div>
+          ) : null}
+        </div>
+
+        {/* Step 1: Validation flaws */}
+        <section className="space-y-2">
+          <h4 className="text-sm font-medium text-foreground">
+            1. 验证问题
+            {hasFlaws && (
+              <Badge variant="destructive" className="ml-2">
+                {flaws.length}
+              </Badge>
             )}
-          </button>
-        </div>
-      </div>
-      {loading ? <div className="muted">加载中...</div> : null}
-      {error ? <div className="badge badge-danger">{error}</div> : null}
-      {submitStatus ? <div className="badge badge-success">{submitStatus}</div> : null}
-      {draftStatus ? <div className="badge badge-success">{draftStatus}</div> : null}
-
-      <div className="stack">
-        <div className="section-title">Validation Flaws</div>
-        {flaws.length === 0 ? (
-          <div className="empty">暂无 flaws</div>
-        ) : (
-          <div className="list">
-            {flaws.map((flaw, index) => (
-              <div key={`${flaw.questionId}-${index}`} className="list-item">
-                <div className="row">
-                  <span className={`badge ${flaw.flawType === "WARNING" ? "badge-warning" : "badge-danger"}`}>
-                    {flaw.flawType ?? "ERROR"}
-                  </span>
-                  <span>{flaw.questionId}</span>
-                </div>
-                <div className="muted">{flaw.flaw}</div>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {(suggestions ?? []).length === 0 ? null : (
-        <div className="stack">
-          <div className="section-title">修复建议</div>
-          <div className="list">
-            {suggestions?.map((item, index) => (
-              <div key={`${item.questionId}-${index}`} className="list-item">
-                <div className="row">
-                  <span className={`badge ${item.repairable ? "badge-success" : "badge-danger"}`}>
-                    {item.repairable ? "可修复" : "需人工"}
-                  </span>
-                  <span>{item.questionId}</span>
-                </div>
-                <div className="muted">{item.reason}</div>
-                <div className="muted">{item.flaw}</div>
-                {item.suggestedValues?.length ? (
-                  <div className="muted">建议值: {item.suggestedValues.join(", ")}</div>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
-      <details className="stack">
-        <summary className="row">
-          <span className="section-title">问题 - 回答预览（折叠）</span>
-          <span className="muted">点击展开</span>
-        </summary>
-        {questionRows.length === 0 ? (
-          <div className="empty">暂无问题数据</div>
-        ) : (
-          <div className="list">
-            {questionRows.map((row) => {
-              const hasChoices = (row.question.possibleAnswers?.length ?? 0) > 0;
-              const isMultiChoice = row.question.isMultiValue || row.question.answerType === "MULTI_CHOICE";
-              return (
-                <div key={row.question.id} className="list-item">
-                  <div className="row">
-                    <span>{row.question.displayName ?? row.question.id}</span>
-                    <span className="muted">{row.question.id}</span>
-                  </div>
-                  {hasChoices ? (
-                    <select
-                    className={`input review-input${failedQuestionIds.has(row.question.id) ? " input-error" : ""}`}
-                      multiple={isMultiChoice}
-                      value={isMultiChoice ? row.selectedValues : row.selectedValues[0] ?? ""}
-                      onChange={(event) => {
-                        if (isMultiChoice) {
-                          const nextValues = Array.from(event.currentTarget.selectedOptions).map(
-                            (option) => option.value
-                          );
-                          updateAnswerForQuestion(row.question, nextValues);
-                          return;
-                        }
-                        updateAnswerForQuestion(row.question, event.currentTarget.value);
-                      }}
+          </h4>
+          {flaws.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-sm text-muted-foreground">
+              暂无验证问题
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              {flaws.map((flaw, index) => (
+                <motion.div
+                  key={`${flaw.questionId}-${index}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: index * 0.05 }}
+                  className="rounded-lg border border-border bg-muted/30 p-4"
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Badge
+                      variant={
+                        flaw.flawType === "WARNING" ? "warning" : "destructive"
+                      }
                     >
-                      {isMultiChoice ? null : <option value="">留空</option>}
-                      {(row.question.possibleAnswers ?? []).map((option) => (
-                        <option key={`${row.question.id}-${option.value}`} value={option.value}>
-                          {option.value}
-                        </option>
-                      ))}
-                    </select>
-                  ) : (
-                    <input
-                    className={`input review-input${failedQuestionIds.has(row.question.id) ? " input-error" : ""}`}
-                      value={row.valueText}
-                      placeholder="输入值（多值请用逗号分隔）"
-                      autoComplete="off"
-                      onChange={(event) => updateAnswerForQuestion(row.question, event.target.value)}
-                    />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </details>
+                      {flaw.flawType ?? "ERROR"}
+                    </Badge>
+                    <span className="font-mono text-sm">{flaw.questionId}</span>
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">{flaw.flaw}</p>
+                </motion.div>
+              ))}
+            </div>
+          )}
+        </section>
 
-      <details className="stack">
-        <summary className="row">
-          <span className="section-title">提交请求（折叠）</span>
-          <span className="muted">JSON</span>
-        </summary>
-        <textarea
-          className="textarea"
-          rows={16}
-          value={requestText}
-          onChange={(event) => {
-            setRequestText(event.target.value);
-            isDirtyRef.current = true;
-          }}
-        />
-      </details>
-    </div>
+        {/* Step 2: Repair suggestions */}
+        {hasSuggestions ? (
+          <section className="space-y-2">
+            <h4 className="text-sm font-medium text-foreground">
+              2. 修复建议
+              <Badge variant="secondary" className="ml-2">
+                {suggestions!.length}
+              </Badge>
+            </h4>
+            <div className="flex flex-col gap-2">
+              {suggestions!.map((item, index) => (
+                <motion.div
+                  key={`${item.questionId}-${index}`}
+                  initial={{ opacity: 0, x: -8 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  transition={{ duration: 0.2, delay: index * 0.05 }}
+                  className="rounded-lg border border-border bg-muted/30 p-4"
+                >
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Badge variant={item.repairable ? "success" : "destructive"}>
+                        {item.repairable ? "可一键修复" : "需人工"}
+                      </Badge>
+                      <span className="font-mono text-sm">{item.questionId}</span>
+                    </div>
+                    {item.repairable && item.suggestedValues?.length ? (
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => applySuggestion(item)}
+                      >
+                        应用建议
+                      </Button>
+                    ) : null}
+                  </div>
+                  <p className="mt-2 text-sm text-muted-foreground">{item.reason}</p>
+                  <p className="mt-1 text-sm text-muted-foreground">{item.flaw}</p>
+                  {item.suggestedValues?.length ? (
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      建议值: {item.suggestedValues.join(", ")}
+                    </p>
+                  ) : null}
+                </motion.div>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* Step 3: Edit answers */}
+        <Collapsible defaultOpen={hasFlaws || hasSuggestions}>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-foreground transition-colors hover:text-foreground/80 [&[data-state=open]_svg]:rotate-90"
+            >
+              <ChevronRight className="h-4 w-4 shrink-0 transition-transform duration-200" />
+              <span>3. 问题与回答</span>
+              <span className="text-muted-foreground">（编辑后需保存或提交）</span>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <motion.div
+              initial={false}
+              animate={{ opacity: 1 }}
+              className="mt-2 flex flex-col gap-3"
+            >
+              {questionRows.length === 0 ? (
+                <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-sm text-muted-foreground">
+                  暂无问题数据
+                </div>
+              ) : (
+                questionRows.map((row, idx) => {
+                  const hasChoices =
+                    (row.question.possibleAnswers?.length ?? 0) > 0;
+                  const isMultiChoice =
+                    row.question.isMultiValue ||
+                    row.question.answerType === "MULTI_CHOICE";
+                  const failed = failedQuestionIds.has(row.question.id);
+                  return (
+                    <motion.div
+                      key={row.question.id}
+                      initial={{ opacity: 0, y: 4 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.15, delay: idx * 0.02 }}
+                      className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-4"
+                    >
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="font-medium">
+                          {row.question.displayName ?? row.question.id}
+                        </span>
+                        <span className="text-xs text-muted-foreground font-mono">
+                          {row.question.id}
+                        </span>
+                      </div>
+                      {hasChoices ? (
+                        <select
+                          className={inputClassName(failed)}
+                          multiple={isMultiChoice}
+                          value={
+                            isMultiChoice
+                              ? row.selectedValues
+                              : row.selectedValues[0] ?? ""
+                          }
+                          onChange={(event) => {
+                            if (isMultiChoice) {
+                              const nextValues = Array.from(
+                                event.currentTarget.selectedOptions
+                              ).map((option) => option.value);
+                              updateAnswerForQuestion(row.question, nextValues);
+                              return;
+                            }
+                            updateAnswerForQuestion(
+                              row.question,
+                              event.currentTarget.value
+                            );
+                          }}
+                        >
+                          {isMultiChoice ? null : (
+                            <option value="">留空</option>
+                          )}
+                          {(row.question.possibleAnswers ?? []).map((option) => (
+                            <option
+                              key={`${row.question.id}-${option.value}`}
+                              value={option.value}
+                            >
+                              {option.value}
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <Input
+                          className={failed ? "border-destructive" : ""}
+                          value={row.valueText}
+                          placeholder="输入值（多值请用逗号分隔）"
+                          autoComplete="off"
+                          onChange={(event) =>
+                            updateAnswerForQuestion(
+                              row.question,
+                              event.target.value
+                            )
+                          }
+                        />
+                      )}
+                    </motion.div>
+                  );
+                })
+              )}
+            </motion.div>
+          </CollapsibleContent>
+        </Collapsible>
+
+        {/* Step 4: JSON preview */}
+        <Collapsible>
+          <CollapsibleTrigger asChild>
+            <button
+              type="button"
+              className="flex w-full items-center gap-2 py-2 text-left text-sm font-medium text-muted-foreground transition-colors hover:text-foreground [&[data-state=open]_svg]:rotate-180"
+            >
+              <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200" />
+              <span>4. 提交请求 JSON</span>
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <Textarea
+              className="mt-2 font-mono text-sm"
+              rows={16}
+              value={requestText}
+              onChange={(event) => {
+                setRequestText(event.target.value);
+                isDirtyRef.current = true;
+              }}
+            />
+          </CollapsibleContent>
+        </Collapsible>
+      </CardContent>
+    </Card>
   );
 }

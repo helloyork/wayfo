@@ -22,4 +22,18 @@ async function isChildrenHealthy() {
   return serverOk && webOk;
 }
 
-module.exports = { isRunning, isChildrenHealthy };
+async function getChildrenHealthStatus() {
+  const [serverRes, webRes] = await Promise.all([
+    requestUrl(SERVER_URL, { timeoutMs: 2000 }).then(
+      (r) => ({ ok: r.statusCode >= 200 && r.statusCode < 300, status: r.statusCode }),
+      (e) => ({ ok: false, error: e?.message ?? String(e) })
+    ),
+    requestUrl(WEB_URL, { timeoutMs: 2000 }).then(
+      (r) => ({ ok: r.statusCode >= 200 && r.statusCode < 400, status: r.statusCode }),
+      (e) => ({ ok: false, error: e?.message ?? String(e) })
+    ),
+  ]);
+  return { server: serverRes, web: webRes };
+}
+
+module.exports = { isRunning, isChildrenHealthy, getChildrenHealthStatus };

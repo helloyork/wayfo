@@ -2,6 +2,14 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { apiBase } from "../../lib/api";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
 
 type RunEvent = {
   id: string;
@@ -41,21 +49,32 @@ export function RunEventStream({ runId }: { runId: string }) {
   }, [sourceUrl]);
 
   return (
-    <div className="card stack">
-      <div className="row">
-        <strong>事件流</strong>
-        <span className="badge">状态: {status}</span>
-      </div>
-      {events.length === 0 ? (
-        <div className="empty">暂无事件</div>
-      ) : (
-        events.map((event) => (
-          <div key={event.id} className="muted">
-            {event.timestamp} · {event.type} {event.step ? `(${event.step})` : ""} {event.message ?? ""}
-            {event.data?.err ? ` · ${JSON.stringify(event.data.err)}` : ""}
+    <Card className="shadow-sm">
+      <CardHeader className="pb-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <CardTitle>事件流</CardTitle>
+          <Badge variant="secondary">状态: {status}</Badge>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {events.length === 0 ? (
+          <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
+            暂无事件
           </div>
-        ))
-      )}
-    </div>
+        ) : (
+          <div className="flex flex-col gap-1 font-mono text-sm text-muted-foreground">
+            {events.map((event) => (
+              <div key={event.id}>
+                {event.timestamp} · {event.type}{" "}
+                {event.step ? `(${event.step})` : ""} {event.message ?? ""}
+                {event.data?.err
+                  ? ` · ${JSON.stringify(event.data.err)}`
+                  : ""}
+              </div>
+            ))}
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }
