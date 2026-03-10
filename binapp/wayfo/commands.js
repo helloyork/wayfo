@@ -62,7 +62,11 @@ async function update() {
     await delay(1000);
   }
   execSync("git pull", { stdio: "inherit" });
-  execSync("yarn install", { stdio: "inherit" });
+  try {
+    execSync("yarn install", { stdio: "inherit" });
+  } catch {
+    log("yarn install failed, continuing update...");
+  }
   log("Removing server and web production builds...");
   deleteServerWebBuilds();
   log("Restarting Wayfo service...");
