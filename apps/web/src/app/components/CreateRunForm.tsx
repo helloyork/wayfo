@@ -68,7 +68,7 @@ type PlanItem = {
   partNumber?: string | null;
   upc?: string | null;
   planDate: string;
-  isPrimary: boolean;
+  isPrimary: boolean | number;
 };
 
 type PlanPreviewResponse = {
@@ -329,7 +329,7 @@ export function CreateRunForm({
         msg += "。请检查：1) 时间列为 MM-DD-YYYY 格式；2) 产品链接列非空";
       }
       setPlanStatus(msg);
-      planFileInputRef.current && (planFileInputRef.current.value = "");
+      if (planFileInputRef.current) planFileInputRef.current.value = "";
       if (payload.dates && payload.itemsByDate) {
         setPlanPreview({
           timezone: payload.timezone,

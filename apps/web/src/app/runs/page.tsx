@@ -1,4 +1,3 @@
-import Link from "next/link";
 import { RunEntryGate } from "../components/RunEntryGate";
 import { RunList } from "../components/RunList";
 import { fetchJson } from "../../lib/api";
