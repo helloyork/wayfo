@@ -462,7 +462,7 @@ runsRouter.post("/plan-run", async (req, res) => {
       amazonUrl: item.amazonUrl,
       marketContext: parsed.data.marketContext,
       manufacturerId: parsed.data.manufacturerId,
-      enumerateVariants: true,
+      enumerateVariants: settings.enumerateVariantsDefault,
       groupId: item.groupId,
       planItemId: item.id
     });
