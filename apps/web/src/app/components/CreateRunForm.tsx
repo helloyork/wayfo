@@ -543,7 +543,7 @@ export function CreateRunForm({
                 </span>
               ) : (
                 <span className="text-xs text-muted-foreground">
-                  未配置全局修改器（可选）
+                  未配置全局修改器
                 </span>
               )}
             </div>

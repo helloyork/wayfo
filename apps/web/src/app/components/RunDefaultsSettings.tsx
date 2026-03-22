@@ -70,6 +70,7 @@ export function RunDefaultsSettings() {
     "success" | "warning" | "danger"
   >("warning");
   const [loading, setLoading] = useState(false);
+  const [wayfairModifierBlocks, setWayfairModifierBlocks] = useState<string[]>([]);
 
   const loadSettings = async () => {
     const res = await fetch(`${apiBase}/api/settings/app`, {
@@ -102,6 +103,9 @@ export function RunDefaultsSettings() {
           enumerateVariantsDefault,
           primaryImageCandidateCount,
           timezone,
+          agentModifiers: {
+            wayfairAnswers: wayfairModifierBlocks.map((s) => s.trim()).filter(Boolean)
+          }
         }),
       });
       if (!res.ok) {
