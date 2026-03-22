@@ -79,6 +79,15 @@ export function getDb() {
       isPrimary integer not null default 0,
       createdAt text not null
     );
+
+    create table if not exists plan_item_answers (
+      id text primary key,
+      planItemId text not null,
+      questionId text not null,
+      rawValue text,
+      valuesJson text not null,
+      createdAt text not null
+    );
   `);
 
   const runColumns = db
@@ -104,6 +113,11 @@ export function getDb() {
   const hasPlanItemId = runColumns.some((column) => column.name === "planItemId");
   if (!hasPlanItemId) {
     db.exec("alter table runs add column planItemId text;");
+  }
+
+  const hasAgentModifiersJson = runColumns.some((column) => column.name === "agentModifiersJson");
+  if (!hasAgentModifiersJson) {
+    db.exec("alter table runs add column agentModifiersJson text;");
   }
 
   const jobColumns = db
@@ -147,6 +161,8 @@ export function getDb() {
       on plan_items (groupId);
     create index if not exists idx_plan_items_date
       on plan_items (planDate);
+    create index if not exists idx_plan_item_answers_plan_item
+      on plan_item_answers (planItemId);
   `);
 
   dbInstance = db;

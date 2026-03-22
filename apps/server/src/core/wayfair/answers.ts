@@ -153,6 +153,8 @@ export async function generateWayfairAnswers(input: {
   snapshot: AmazonProductSnapshot;
   questions: WayfairProductAdditionQuestion[];
   skipQuestionIds?: string[];
+  /** Optional operator instructions merged into the user prompt (Wayfair catalog filling). */
+  promptModifier?: string;
 }) {
   const apiKey = getOpenAiApiKey();
   if (!apiKey) {
@@ -187,6 +189,7 @@ export async function generateWayfairAnswers(input: {
       model
     } satisfies AgentResult;
   }
+  const modifier = input.promptModifier?.trim();
   const prompt = [
     "You are a Wayfair catalog expert.",
     "Fill answers for product addition questions using the product data.",
@@ -204,6 +207,13 @@ export async function generateWayfairAnswers(input: {
     "Product:",
     buildProductSummary(input.snapshot),
     "",
+    ...(modifier
+      ? [
+          "Additional instructions from operator (apply when consistent with rules above):",
+          modifier,
+          ""
+        ]
+      : []),
     "Questions:",
     llmQuestions.map(questionSummary).join("\n")
   ].join("\n");

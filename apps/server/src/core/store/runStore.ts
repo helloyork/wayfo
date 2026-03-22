@@ -3,11 +3,13 @@ import path from "path";
 import { createHash } from "crypto";
 import { nanoid } from "nanoid";
 import {
+  AgentModifiersSchema,
   Artifact,
   Job,
   Run,
   RunStatus,
-  Step
+  Step,
+  type AgentModifiers
 } from "@wayfo/shared";
 import { ensureDir, runsRoot } from "../paths";
 import { getDb } from "./sqlite";
@@ -24,6 +26,7 @@ type RunRow = {
   enumerateVariants: number | null;
   groupId: string | null;
   planItemId: string | null;
+  agentModifiersJson: string | null;
   createdAt: string;
   updatedAt: string;
 };
@@ -83,6 +86,26 @@ function ensureRunDirs(runId: string) {
   ensureDir(path.join(runsRoot, runId, "logs"));
 }
 
+function parseAgentModifiersJson(raw: string | null | undefined): AgentModifiers | undefined {
+  if (!raw?.trim()) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    const result = AgentModifiersSchema.safeParse(parsed);
+    return result.success ? result.data : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function stringifyAgentModifiersJson(modifiers: AgentModifiers | undefined): string | null {
+  if (!modifiers) {
+    return null;
+  }
+  return JSON.stringify(modifiers);
+}
+
 function readRunFromDisk(runId: string) {
   const runFile = path.join(runsRoot, runId, "run.json");
   return readJson<Run>(runFile);
@@ -129,6 +152,7 @@ export function createRun(input: {
   enumerateVariants?: boolean;
   groupId?: string;
   planItemId?: string;
+  agentModifiers?: AgentModifiers;
 }): Run {
   const now = new Date().toISOString();
   const id = nanoid();
@@ -140,6 +164,7 @@ export function createRun(input: {
     enumerateVariants: input.enumerateVariants ?? false,
     groupId: input.groupId,
     planItemId: input.planItemId,
+    ...(input.agentModifiers ? { agentModifiers: input.agentModifiers } : {}),
     status: "PENDING",
     createdAt: now,
     updatedAt: now
@@ -162,6 +187,7 @@ export function createRun(input: {
         enumerateVariants,
         groupId,
         planItemId,
+        agentModifiersJson,
         createdAt,
         updatedAt
       )
@@ -175,6 +201,7 @@ export function createRun(input: {
         @enumerateVariants,
         @groupId,
         @planItemId,
+        @agentModifiersJson,
         @createdAt,
         @updatedAt
       )
@@ -185,7 +212,8 @@ export function createRun(input: {
     manufacturerId: run.manufacturerId ?? null,
     enumerateVariants: run.enumerateVariants ? 1 : 0,
     groupId: run.groupId ?? null,
-    planItemId: run.planItemId ?? null
+    planItemId: run.planItemId ?? null,
+    agentModifiersJson: stringifyAgentModifiersJson(run.agentModifiers)
   });
 
   return run;
@@ -208,19 +236,23 @@ export function listRuns(): Run[] {
   const rows = db
     .prepare("select * from runs order by createdAt desc")
     .all() as RunRow[];
-  return rows.map((row) => ({
-    id: row.id,
-    amazonUrl: row.amazonUrl,
-    marketContext: row.marketContext ?? undefined,
-    manufacturerId: row.manufacturerId ?? undefined,
-    enumerateVariants: row.enumerateVariants ? row.enumerateVariants === 1 : undefined,
-    groupId: row.groupId ?? undefined,
-    planItemId: row.planItemId ?? undefined,
-    status: row.status,
-    currentStep: row.currentStep ?? undefined,
-    createdAt: row.createdAt,
-    updatedAt: row.updatedAt
-  }));
+  return rows.map((row) => {
+    const agentModifiers = parseAgentModifiersJson(row.agentModifiersJson);
+    return {
+      id: row.id,
+      amazonUrl: row.amazonUrl,
+      marketContext: row.marketContext ?? undefined,
+      manufacturerId: row.manufacturerId ?? undefined,
+      enumerateVariants: row.enumerateVariants ? row.enumerateVariants === 1 : undefined,
+      groupId: row.groupId ?? undefined,
+      planItemId: row.planItemId ?? undefined,
+      ...(agentModifiers ? { agentModifiers } : {}),
+      status: row.status,
+      currentStep: row.currentStep ?? undefined,
+      createdAt: row.createdAt,
+      updatedAt: row.updatedAt
+    };
+  });
 }
 
 export function getRun(runId: string): Run | null {
@@ -261,6 +293,7 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
           enumerateVariants = @enumerateVariants,
           groupId = @groupId,
           planItemId = @planItemId,
+          agentModifiersJson = @agentModifiersJson,
           updatedAt = @updatedAt
       where id = @id
     `
@@ -274,6 +307,7 @@ export function updateRun(runId: string, patch: Partial<Run>): Run {
     enumerateVariants: next.enumerateVariants ? 1 : 0,
     groupId: next.groupId ?? null,
     planItemId: next.planItemId ?? null,
+    agentModifiersJson: stringifyAgentModifiersJson(next.agentModifiers),
     updatedAt: next.updatedAt
   });
 

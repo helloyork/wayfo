@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { apiBase } from "../../lib/api";
+import { RunProductImagePreview } from "./RunProductImagePreview";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -86,6 +87,7 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
   const refreshInFlightRef = useRef(false);
   const isDirtyRef = useRef(false);
   const submittingRef = useRef(false);
+  const [imagePreviewRefreshSig, setImagePreviewRefreshSig] = useState(0);
 
   const updateSubmitStateFromSubmissions = useCallback((items: Submission[] | null) => {
     if (!items || items.length === 0 || !submittingRef.current) {
@@ -155,6 +157,10 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
   }, [loadData]);
 
   useEffect(() => {
+    setImagePreviewRefreshSig(0);
+  }, [runId]);
+
+  useEffect(() => {
     submittingRef.current = submitting;
   }, [submitting]);
 
@@ -196,6 +202,19 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
           ].includes(parsed.type)
         ) {
           scheduleRefresh();
+        }
+        if (
+          parsed.step &&
+          (parsed.step === "SCRAPE_AMAZON" || parsed.step === "IMAGE_GENERATE") &&
+          parsed.type &&
+          (parsed.type === "JOB_PROGRESS" ||
+            parsed.type === "JOB_FAILED" ||
+            parsed.type === "JOB_STARTED")
+        ) {
+          setImagePreviewRefreshSig((n: number) => n + 1);
+        }
+        if (parsed.type === "RUN_COMPLETED") {
+          setImagePreviewRefreshSig((n: number) => n + 1);
         }
         if (
           submittingRef.current &&
@@ -424,6 +443,10 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
         </div>
       </CardHeader>
       <CardContent className="flex flex-col gap-5">
+        <RunProductImagePreview
+          runId={runId}
+          refreshSignal={imagePreviewRefreshSig}
+        />
         {loading ? (
           <div className="text-sm text-muted-foreground">加载中...</div>
         ) : null}

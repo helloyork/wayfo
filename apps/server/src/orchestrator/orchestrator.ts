@@ -25,6 +25,7 @@ import {
 import {
   addProductGroupMembers,
   getPlanItemById,
+  listPlanItemAnswers,
   setProductGroupPrimaryAsin
 } from "../core/store/planStore";
 import {
@@ -57,6 +58,10 @@ import {
 } from "../core/wayfair/discovery";
 import { flattenQuestions, normalizeAnswersForPart } from "../core/wayfair/answerRules";
 import { submitWayfairProductAdditions, fetchWayfairSubmissions } from "../core/wayfair/productAddition";
+import {
+  mergeWayfairAnswersPromptModifier,
+  wayfairAnswersModifiersForHash
+} from "../core/wayfair/agentModifiers";
 import { buildWayfairSubmitRequest, buildWayfairBatchSubmitRequest, type VariantBatchInput, type RewrittenContentInput } from "../core/wayfair/submitBuilder";
 import { rewriteProductContent } from "../core/wayfair/contentRewriter";
 import { reduceWayfairFlaws } from "../core/wayfair/flawReducer";
@@ -1491,10 +1496,21 @@ async function runWayfairSubmit(run: Run) {
     return;
   }
 
+  const appSettings = getAppSettings();
+  const wayfairAnswersModifierHash = wayfairAnswersModifiersForHash(
+    appSettings.agentModifiers?.wayfairAnswers,
+    run.agentModifiers?.wayfairAnswers
+  );
+  const wayfairAnswersPromptModifier = mergeWayfairAnswersPromptModifier(
+    appSettings.agentModifiers?.wayfairAnswers,
+    run.agentModifiers?.wayfairAnswers
+  );
+
   const inputHash = hashInput({
     classId,
     asin: snapshot.asin,
-    schemaVersion: wayfairSubmitSchemaVersion
+    schemaVersion: wayfairSubmitSchemaVersion,
+    wayfairAnswersModifiers: wayfairAnswersModifierHash
   });
   const jobResult = getOrCreateJob({
     runId: run.id,
@@ -1609,6 +1625,17 @@ async function runWayfairSubmit(run: Run) {
 
     const planItem = run.planItemId ? getPlanItemById(run.planItemId) : null;
     const universalProductCode = planItem?.upc?.trim() || null;
+    const planAnswerEntries = planItem
+      ? listPlanItemAnswers(planItem.id).map((row) => ({
+          questionId: row.questionId,
+          values:
+            row.values.length > 0
+              ? row.values
+              : row.rawValue?.trim()
+                ? [row.rawValue.trim()]
+                : []
+        }))
+      : [];
 
     let request: WayfairSubmitProductAdditionsRequest;
     let answerResultsForArtifact: unknown;
@@ -1671,7 +1698,9 @@ async function runWayfairSubmit(run: Run) {
         brandAssociations,
         mediaMetaDataTags: mediaTags,
         manufacturerId: run.manufacturerId,
-        universalProductCode
+        universalProductCode,
+        planAnswerEntries: planAnswerEntries.length > 0 ? planAnswerEntries : undefined,
+        promptModifier: wayfairAnswersPromptModifier ?? null
       });
 
       request = sanitizeWayfairRequestAnswers(batchBuilt.request, questions);
@@ -1702,7 +1731,9 @@ async function runWayfairSubmit(run: Run) {
         manufacturerId: run.manufacturerId,
         uploadedImageUrls,
         rewrittenContent: rewrittenContents.get(mainAsin!) ?? null,
-        universalProductCode
+        universalProductCode,
+        planAnswerEntries: planAnswerEntries.length > 0 ? planAnswerEntries : undefined,
+        promptModifier: wayfairAnswersPromptModifier ?? null
       });
 
       request = sanitizeWayfairRequestAnswers(built.request, questions);

@@ -3,7 +3,7 @@ import path from "path";
 import { createHash } from "crypto";
 import OpenAI, { toFile } from "openai";
 import sharp from "sharp";
-import { getOpenAiApiKey } from "../store/settingsStore";
+import { getOpenAiApiKey, getOpenAiImageModel } from "../store/settingsStore";
 import { getImagePool } from "../pools/registry";
 import { dataRoot, ensureDir } from "../paths";
 import { log } from "../logger";
@@ -39,10 +39,11 @@ const qualityMap: Record<"low" | "medium" | "high", QualityConfig> = {
   high: { openaiQuality: "high", size: "1024x1024" }
 };
 
+/** Approximate USD per image for GPT Image family at 1024x1024 (see OpenAI pricing). */
 const costPerImage: Record<"low" | "medium" | "high", number> = {
-  low: 0.011,
-  medium: 0.042,
-  high: 0.167
+  low: 0.009,
+  medium: 0.034,
+  high: 0.133
 };
 
 function generateOutputHash(input: {
@@ -85,6 +86,7 @@ async function loadPngSquareBuffer(sourcePath: string): Promise<Buffer> {
 
 async function generateSingleImage(input: {
   openai: OpenAI;
+  model: string;
   sourcePath: string;
   sourceUrl: string;
   prompt: string;
@@ -93,9 +95,8 @@ async function generateSingleImage(input: {
   outputDir: string;
   variantId?: string;
 }): Promise<GeneratedImage> {
-  const { openai, sourcePath, sourceUrl, prompt, type, quality, outputDir, variantId } = input;
+  const { openai, model, sourcePath, sourceUrl, prompt, type, quality, outputDir, variantId } = input;
   const qualityConfig = qualityMap[quality];
-  const model = "gpt-image-1";
   const inputFidelity = "low";
 
   if (!fs.existsSync(sourcePath)) {
@@ -217,8 +218,10 @@ export async function generateImages(input: {
     throw new Error("OpenAI API Key not configured");
   }
 
+  const model = getOpenAiImageModel();
+
   if (input.tasks.length === 0) {
-    return { images: [], totalCost: 0, model: "gpt-image-1", errors: [] };
+    return { images: [], totalCost: 0, model, errors: [] };
   }
 
   const openai = new OpenAI({ apiKey });
@@ -233,6 +236,7 @@ export async function generateImages(input: {
       const quality = task.quality ?? "medium";
       const result = await generateSingleImage({
         openai,
+        model,
         sourcePath: task.sourcePath,
         sourceUrl: task.sourceUrl,
         prompt: task.prompt,
@@ -271,7 +275,7 @@ export async function generateImages(input: {
   return {
     images: results,
     totalCost,
-    model: "gpt-image-1",
+    model,
     errors
   };
 }

@@ -25,6 +25,9 @@ import {
   DEFAULT_MARKET_CONTEXT,
   MARKET_CONTEXT_PRESETS,
 } from "@/lib/marketContext";
+import { Loader2 } from "lucide-react";
+import { PlanTemplateDownloadDialog } from "./PlanTemplateDownloadDialog";
+import { WayfairAgentModifiersDialog } from "./WayfairAgentModifiersDialog";
 
 type BrandAssociation = {
   id: string;
@@ -76,6 +79,11 @@ type PlanPreviewResponse = {
   today: string;
   dates: string[];
   itemsByDate: Record<string, PlanItem[]>;
+};
+
+type TaxonomyClassRow = {
+  classId: string;
+  name: string;
 };
 
 function badgeVariant(
@@ -204,7 +212,38 @@ export function CreateRunForm({
   const [planRunLoading, setPlanRunLoading] = useState(false);
   const [planPreview, setPlanPreview] = useState<PlanPreviewResponse | null>(null);
   const [planPreviewLoading, setPlanPreviewLoading] = useState(false);
+  const [taxonomyClasses, setTaxonomyClasses] = useState<TaxonomyClassRow[]>([]);
+  const [taxonomyLoading, setTaxonomyLoading] = useState(false);
+  const [taxonomyError, setTaxonomyError] = useState<string | null>(null);
+  const [planTemplateDialogOpen, setPlanTemplateDialogOpen] = useState(false);
+  const [planTemplateEntryLoading, setPlanTemplateEntryLoading] = useState(false);
+  const [wayfairModifierDialogOpen, setWayfairModifierDialogOpen] = useState(false);
+  const [globalModifierBlockCount, setGlobalModifierBlockCount] = useState(0);
   const planFileInputRef = useRef<HTMLInputElement>(null);
+
+  const fetchGlobalModifierBlockCount = useCallback(async () => {
+    try {
+      const res = await fetch(`${apiBase}/api/settings/app`, { cache: "no-store" });
+      if (!res.ok) {
+        return;
+      }
+      const payload = (await res.json()) as {
+        agentModifiers?: { wayfairAnswers?: string[] };
+      };
+      const list = payload.agentModifiers?.wayfairAnswers ?? [];
+      setGlobalModifierBlockCount(list.filter((s) => s.trim().length > 0).length);
+    } catch {
+      /* ignore */
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchGlobalModifierBlockCount();
+  }, [fetchGlobalModifierBlockCount]);
+
+  const onPlanTemplateDialogReady = useCallback(() => {
+    setPlanTemplateEntryLoading(false);
+  }, []);
 
   const fetchPlanPreview = useCallback(async () => {
     setPlanPreviewLoading(true);
@@ -229,6 +268,36 @@ export function CreateRunForm({
   useEffect(() => {
     fetchPlanPreview();
   }, [fetchPlanPreview]);
+
+  const fetchTaxonomyClasses = useCallback(async (mc: string) => {
+    const trimmed = mc.trim();
+    if (!trimmed) {
+      setTaxonomyClasses([]);
+      setTaxonomyError(null);
+      return;
+    }
+    setTaxonomyLoading(true);
+    setTaxonomyError(null);
+    try {
+      const params = new URLSearchParams({ marketContext: trimmed });
+      const res = await fetch(`${apiBase}/api/wayfair/taxonomy-classes?${params.toString()}`);
+      if (!res.ok) {
+        const err = (await res.json().catch(() => ({}))) as { message?: string };
+        throw new Error(err.message ?? "加载 taxonomy 类目失败");
+      }
+      const data = (await res.json()) as { classes: TaxonomyClassRow[] };
+      setTaxonomyClasses(data.classes ?? []);
+    } catch (err) {
+      setTaxonomyError(err instanceof Error ? err.message : "加载 taxonomy 类目失败");
+      setTaxonomyClasses([]);
+    } finally {
+      setTaxonomyLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    void fetchTaxonomyClasses(marketContext);
+  }, [marketContext, fetchTaxonomyClasses]);
 
   const fetchBrands = useCallback(async (mc: string) => {
     setBrandsLoading(true);
@@ -267,6 +336,7 @@ export function CreateRunForm({
     setMarketContext(value);
     onMarketContextChange?.(value);
     fetchBrands(value);
+    void fetchTaxonomyClasses(value);
   };
 
   const onSubmit = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -280,7 +350,7 @@ export function CreateRunForm({
         body: JSON.stringify({
           amazonUrl,
           marketContext: marketContext || undefined,
-          manufacturerId: manufacturerId || undefined,
+          manufacturerId: manufacturerId || undefined
         }),
       });
       if (!res.ok) {
@@ -295,7 +365,7 @@ export function CreateRunForm({
     }
   };
 
-  const onDownloadTemplate = () => {
+  const onDownloadBaseTemplate = () => {
     window.location.href = `${apiBase}/api/runs/plan-template`;
   };
 
@@ -326,7 +396,8 @@ export function CreateRunForm({
       let msg = `导入完成：${activated} 行生效`;
       if (errorCount > 0) msg += `（${errorCount} 行有错误）`;
       if (activated === 0 && payload.summary.validRows === 0) {
-        msg += "。请检查：1) 时间列为 MM-DD-YYYY 格式；2) 产品链接列非空";
+        msg +=
+          "。请检查：1) 第 2 行为字段 id（含 amazonUrl、planDate）；2) 时间列为 MM-DD-YYYY；3) 产品链接非空";
       }
       setPlanStatus(msg);
       if (planFileInputRef.current) planFileInputRef.current.value = "";
@@ -455,9 +526,27 @@ export function CreateRunForm({
             {error ? (
               <div className="text-sm text-destructive">{error}</div>
             ) : null}
-            <Button type="submit" disabled={loading || !manufacturerId}>
-              {loading ? "创建中..." : "创建 Run"}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button type="submit" disabled={loading || !manufacturerId}>
+                {loading ? "创建中..." : "创建 Run"}
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setWayfairModifierDialogOpen(true)}
+              >
+                全局修改器…
+              </Button>
+              {globalModifierBlockCount > 0 ? (
+                <span className="text-xs text-muted-foreground">
+                  已保存 {globalModifierBlockCount} 条全局说明
+                </span>
+              ) : (
+                <span className="text-xs text-muted-foreground">
+                  未配置全局修改器（可选）
+                </span>
+              )}
+            </div>
           </CardContent>
         </Card>
       </form>
@@ -466,7 +555,9 @@ export function CreateRunForm({
         <CardHeader>
           <CardTitle>批量导入计划</CardTitle>
           <CardDescription>
-            上传计划仅覆盖保存，点击运行后才执行当天行。
+            上传计划仅覆盖保存，点击运行后才执行当天行。Excel 需两行表头：第 1 行可读名（可留空），第 2
+            行为字段 id。下载模板时在对话框中选择类目与题目列（与当前 Market Context 的 taxonomy
+            一致）。多值可用 ; 或 | 分隔。
           </CardDescription>
         </CardHeader>
         <CardContent className="flex flex-col gap-4">
@@ -481,8 +572,27 @@ export function CreateRunForm({
             }}
           />
           <div className="flex flex-wrap items-center gap-2">
-            <Button type="button" variant="outline" onClick={onDownloadTemplate}>
-              下载模板
+            <Button
+              type="button"
+              onClick={() => {
+                setPlanTemplateEntryLoading(true);
+                requestAnimationFrame(() => {
+                  setPlanTemplateDialogOpen(true);
+                });
+              }}
+              disabled={taxonomyLoading || planTemplateEntryLoading}
+            >
+              {planTemplateEntryLoading ? (
+                <>
+                  <Loader2 className="animate-spin" />
+                  打开中…
+                </>
+              ) : (
+                "下载计划模板…"
+              )}
+            </Button>
+            <Button type="button" variant="outline" onClick={onDownloadBaseTemplate}>
+              仅基础列
             </Button>
             <Button
               type="button"
@@ -519,6 +629,32 @@ export function CreateRunForm({
           ) : null}
         </CardContent>
       </Card>
+
+      <WayfairAgentModifiersDialog
+        open={wayfairModifierDialogOpen}
+        onOpenChange={setWayfairModifierDialogOpen}
+        apiBase={apiBase}
+        onSaved={() => void fetchGlobalModifierBlockCount()}
+      />
+
+      <PlanTemplateDownloadDialog
+        open={planTemplateDialogOpen}
+        onOpenChange={(open) => {
+          setPlanTemplateDialogOpen(open);
+          if (!open) setPlanTemplateEntryLoading(false);
+        }}
+        marketContext={marketContext}
+        apiBase={apiBase}
+        taxonomyClasses={taxonomyClasses}
+        taxonomyLoading={taxonomyLoading}
+        taxonomyError={taxonomyError}
+        onPlanStatus={(message, tone) => {
+          setPlanStatusTone(tone);
+          setPlanStatus(message);
+        }}
+        onDownloadBaseTemplate={onDownloadBaseTemplate}
+        onAfterOpen={onPlanTemplateDialogReady}
+      />
     </div>
   );
 }

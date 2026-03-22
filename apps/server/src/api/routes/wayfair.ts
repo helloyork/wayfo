@@ -7,11 +7,23 @@ import { sendError } from "../errors";
 import { getWayfairActiveSettings } from "../../core/store/settingsStore";
 import { fetchWayfairBrandAssociations } from "../../core/wayfair/discovery";
 import { dataRoot } from "../../core/paths";
+import { getWayfairPoolId } from "../../core/config";
+import {
+  getTaxonomyCacheMeta,
+  getTaxonomyCacheRootDir,
+  isTaxonomyCacheVersionReady,
+  parseMarketContext as parseTaxonomyMarketContext
+} from "../../core/wayfair/taxonomyInit";
+import { loadTaxonomyDocuments } from "../../core/wayfair/taxonomySearch";
 
 export const wayfairRouter = Router();
 
 const brandsQuerySchema = z.object({
   marketContext: z.string().optional()
+});
+
+const taxonomyClassesQuerySchema = z.object({
+  marketContext: z.string().min(1)
 });
 
 function getCacheDir() {
@@ -95,6 +107,85 @@ function parseMarketContext(raw: string | undefined): WayfairMarketContextInput 
     return null;
   }
 }
+
+wayfairRouter.get("/taxonomy-classes", (req, res) => {
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    return sendError(
+      res,
+      {
+        code: "WAYFAIR_NOT_CONFIGURED",
+        message: "Wayfair credentials not configured"
+      },
+      400
+    );
+  }
+
+  const parsed = taxonomyClassesQuerySchema.safeParse(req.query);
+  if (!parsed.success) {
+    return sendError(
+      res,
+      {
+        code: "INVALID_INPUT",
+        message: "marketContext query parameter is required"
+      },
+      400
+    );
+  }
+
+  const marketContext = parseTaxonomyMarketContext(parsed.data.marketContext);
+  if (!marketContext) {
+    return sendError(
+      res,
+      {
+        code: "INVALID_MARKET_CONTEXT",
+        message: "Invalid marketContext JSON"
+      },
+      400
+    );
+  }
+
+  const poolId = getWayfairPoolId();
+  const meta = getTaxonomyCacheMeta({
+    env: settings.env,
+    poolId,
+    marketContext
+  });
+  if (!meta?.activeVersion) {
+    return sendError(
+      res,
+      {
+        code: "TAXONOMY_NOT_READY",
+        message: "Taxonomy cache missing; initialize taxonomy or complete a Run first"
+      },
+      404
+    );
+  }
+
+  const root = getTaxonomyCacheRootDir({
+    env: settings.env,
+    poolId,
+    marketContext
+  });
+  const versionDir = path.join(root, "versions", meta.activeVersion);
+  if (!isTaxonomyCacheVersionReady(versionDir)) {
+    return sendError(
+      res,
+      {
+        code: "TAXONOMY_NOT_READY",
+        message: "Taxonomy cache incomplete"
+      },
+      404
+    );
+  }
+
+  const docs = loadTaxonomyDocuments(versionDir);
+  const classes = docs.map((d) => ({ classId: d.classId, name: d.name }));
+  res.json({
+    classes,
+    taxonomyVersion: meta.activeVersion
+  });
+});
 
 wayfairRouter.get("/brands", async (req, res) => {
   const settings = getWayfairActiveSettings();

@@ -1,10 +1,12 @@
 import { Router } from "express";
 import { z } from "zod";
+import { OPENAI_IMAGE_MODEL_OPTIONS, isValidOpenAiImageModel } from "../../core/openaiImageModel";
 import {
   getAppSettings,
   getHasDataApiKey,
   getHasDataSettingsMeta,
   getOpenAiApiKey,
+  getOpenAiImageModel,
   getOpenAiSettingsMeta,
   getR2Settings,
   getR2SettingsMeta,
@@ -13,12 +15,17 @@ import {
   setAppSettings,
   setHasDataApiKey,
   setOpenAiApiKey,
+  setOpenAiImageModel,
   setR2Settings,
   setWayfairActiveEnv,
   setWayfairSettings
 } from "../../core/store/settingsStore";
 import { validateHasDataApiKey } from "../../connectors/hasdata";
 import { validateWayfairCredentials } from "../../connectors/wayfair";
+import {
+  AgentModifiersPayloadSchema,
+  sanitizeAgentModifiers
+} from "../../core/wayfair/agentModifiers";
 import { sendError } from "../errors";
 
 export const settingsRouter = Router();
@@ -30,7 +37,8 @@ const hasDataKeySchema = z.object({
 const appSettingsSchema = z.object({
   enumerateVariantsDefault: z.boolean(),
   primaryImageCandidateCount: z.number().int().min(1).max(8),
-  timezone: z.string().min(1)
+  timezone: z.string().min(1),
+  agentModifiers: AgentModifiersPayloadSchema.optional()
 });
 
 const wayfairSettingsSchema = z.object({
@@ -42,7 +50,12 @@ const wayfairSettingsSchema = z.object({
 });
 
 const openAiSettingsSchema = z.object({
-  apiKey: z.string().min(1)
+  apiKey: z.string().min(1),
+  imageModel: z.string().min(1).max(80).optional()
+});
+
+const openAiImageModelPatchSchema = z.object({
+  imageModel: z.string().min(1).max(80)
 });
 
 function maskApiKey(apiKey: string) {
@@ -135,7 +148,9 @@ settingsRouter.get("/openai", (_req, res) => {
   res.json({
     hasKey: Boolean(apiKey),
     maskedKey: apiKey ? maskApiKey(apiKey) : null,
-    updatedAt: meta?.updatedAt ?? null
+    updatedAt: meta?.updatedAt ?? null,
+    imageModel: getOpenAiImageModel(),
+    imageModelOptions: OPENAI_IMAGE_MODEL_OPTIONS.map((o) => ({ id: o.id, label: o.label }))
   });
 });
 
@@ -147,8 +162,49 @@ settingsRouter.post("/openai", (req, res) => {
       message: "apiKey is required"
     });
   }
-  setOpenAiApiKey(parsed.data.apiKey.trim());
-  res.json({ ok: true });
+  if (parsed.data.imageModel !== undefined && !isValidOpenAiImageModel(parsed.data.imageModel)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "imageModel is not a supported OpenAI image model"
+    });
+  }
+  try {
+    setOpenAiApiKey(
+      parsed.data.apiKey.trim(),
+      parsed.data.imageModel !== undefined ? parsed.data.imageModel.trim() : undefined
+    );
+  } catch (error) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: error instanceof Error ? error.message : "OpenAI settings invalid"
+    });
+  }
+  res.json({ ok: true, imageModel: getOpenAiImageModel() });
+});
+
+settingsRouter.patch("/openai", (req, res) => {
+  const parsed = openAiImageModelPatchSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "imageModel is required"
+    });
+  }
+  if (!isValidOpenAiImageModel(parsed.data.imageModel)) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "imageModel is not a supported OpenAI image model"
+    });
+  }
+  try {
+    setOpenAiImageModel(parsed.data.imageModel.trim());
+  } catch (error) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: error instanceof Error ? error.message : "Failed to save image model"
+    });
+  }
+  res.json({ ok: true, imageModel: getOpenAiImageModel() });
 });
 
 settingsRouter.post("/openai/validate", async (req, res) => {
@@ -199,11 +255,27 @@ settingsRouter.post("/app", (req, res) => {
       message: "timezone invalid"
     });
   }
-  const next = setAppSettings(parsed.data);
+  const hadAgentModifiers =
+    req.body &&
+    typeof req.body === "object" &&
+    !Array.isArray(req.body) &&
+    "agentModifiers" in req.body;
+  const sanitizedModifiers =
+    hadAgentModifiers && parsed.data.agentModifiers !== undefined
+      ? sanitizeAgentModifiers(parsed.data.agentModifiers) ?? undefined
+      : undefined;
+  const next = setAppSettings({
+    enumerateVariantsDefault: parsed.data.enumerateVariantsDefault,
+    primaryImageCandidateCount: parsed.data.primaryImageCandidateCount,
+    timezone: parsed.data.timezone,
+    agentModifiers: hadAgentModifiers ? sanitizedModifiers : undefined,
+    replaceAgentModifiers: hadAgentModifiers
+  });
   res.json({
     enumerateVariantsDefault: next.enumerateVariantsDefault,
     primaryImageCandidateCount: next.primaryImageCandidateCount,
     timezone: next.timezone,
+    agentModifiers: next.agentModifiers,
     updatedAt: next.updatedAt
   });
 });

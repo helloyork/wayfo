@@ -19,6 +19,7 @@ import {
   readRunCache,
   readRunImageIndex
 } from "../../core/amazon/cache";
+import { listRunGeneratedImageEntries } from "../../core/images/runGeneratedArtifact";
 import {
   createArtifact,
   createRun,
@@ -30,19 +31,37 @@ import {
   listRuns,
   updateRun
 } from "../../core/store/runStore";
-import { getAppSettings } from "../../core/store/settingsStore";
+import { getAppSettings, getWayfairActiveSettings } from "../../core/store/settingsStore";
 import {
   addProductGroupMembers,
   deactivateAllPlanItems,
   createPlanItem,
   createProductGroup,
+  deleteAllPlanItemAnswers,
   getProductGroupByAsin,
   getProductGroupByKey,
   listActivePlanItemsByDate,
+  replacePlanItemAnswers,
   setProductGroupPrimaryAsin
 } from "../../core/store/planStore";
+import { parseMarketContext as parseWayfairMarketContext } from "../../core/wayfair/taxonomyInit";
+import { PLAN_BASE_COLUMNS, PLAN_BASE_FIELD_IDS } from "../../core/plan/planExcelConstants";
+import {
+  parsePlanFieldIdRow,
+  readPlanExcelCellText,
+  splitPlanCellMultiValues
+} from "../../core/plan/planExcelCells";
+import { buildPlanTemplateXlsxBuffer } from "../../core/plan/planWorkbook";
+import {
+  buildMergedQuestionColumnsForClasses,
+  type PlanTemplateQuestionColumn
+} from "../../core/plan/planTemplateQuestions";
 import { startRun, resumeRun, resumeWayfairAfterReview } from "../../orchestrator/orchestrator";
 import { extractAsin } from "../../core/amazon/asin";
+import {
+  AgentModifiersPayloadSchema,
+  sanitizeAgentModifiers
+} from "../../core/wayfair/agentModifiers";
 
 export const runsRouter = Router();
 
@@ -50,7 +69,8 @@ const createRunSchema = z.object({
   amazonUrl: z.string().min(1),
   marketContext: z.string().optional(),
   manufacturerId: z.string().optional(),
-  enumerateVariants: z.boolean().optional()
+  enumerateVariants: z.boolean().optional(),
+  agentModifiers: AgentModifiersPayloadSchema.optional()
 });
 
 const actionSchema = z.object({
@@ -70,6 +90,33 @@ const planRunSchema = z.object({
   marketContext: z.string().min(1),
   manufacturerId: z.string().optional()
 });
+
+const planTemplateClassesSchema = z.object({
+  marketContext: z.string().min(1),
+  classIds: z.array(z.coerce.number().int().positive()).min(1).max(40)
+});
+
+const planTemplatePostSchema = planTemplateClassesSchema.extend({
+  /** When omitted, include all merged question columns. Empty array = base columns only. */
+  questionIds: z.array(z.string().min(1)).max(500).optional()
+});
+
+/**
+ * Keep only question columns whose fieldId is in questionIds, in the order of questionIds.
+ */
+function pickQuestionColumnsByIds(
+  questionCols: PlanTemplateQuestionColumn[],
+  questionIds: string[]
+): PlanTemplateQuestionColumn[] {
+  if (questionIds.length === 0) {
+    return [];
+  }
+  const order = new Map(questionIds.map((id, i) => [id, i]));
+  const idSet = new Set(questionIds);
+  return questionCols
+    .filter((c) => idSet.has(c.fieldId))
+    .sort((a, b) => (order.get(a.fieldId) ?? 0) - (order.get(b.fieldId) ?? 0));
+}
 
 type UploadRequest = Request & { file?: { buffer: Buffer } };
 
@@ -215,10 +262,6 @@ function normalizeReviewRequest(
   };
 }
 
-function readCellText(cell: { text?: string; value?: unknown }) {
-  return String(cell.text ?? cell.value ?? "").trim();
-}
-
 function addDaysToDateKey(dateKey: string, days: number): string {
   const [y, m, d] = dateKey.split("-").map(Number);
   const date = new Date(y, m - 1, d);
@@ -251,34 +294,153 @@ runsRouter.get("/plan-preview", (_req, res) => {
   });
 });
 
+/** Base columns only (no Wayfair questions). Prefer POST /plan-template with classIds. */
 runsRouter.get("/plan-template", async (_req, res) => {
-  const workbook = new ExcelJS.Workbook();
-  workbook.creator = "wayfo";
-  workbook.created = new Date();
-  const sheet = workbook.addWorksheet("Plan");
-  sheet.columns = [
-    { header: "产品链接", key: "amazonUrl", width: 50 },
-    { header: "SKU", key: "sku", width: 20 },
-    { header: "Part Number", key: "partNumber", width: 26 },
-    { header: "UPC", key: "upc", width: 18 },
-    { header: "时间", key: "planDate", width: 18 }
-  ];
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-  const header = sheet.getRow(1);
-  header.font = { bold: true, color: { argb: "FFFFFFFF" } };
-  header.alignment = { vertical: "middle", horizontal: "center" };
-  header.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1F2937" } };
-  header.height = 22;
-  sheet.getColumn(5).numFmt = "mm-dd-yyyy";
-  sheet.getRow(2).height = 18;
+  try {
+    const buf = await buildPlanTemplateXlsxBuffer(PLAN_BASE_COLUMNS);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", "attachment; filename=\"plan-template.xlsx\"");
+    res.send(buf);
+  } catch (error) {
+    sendError(res, {
+      code: "PLAN_TEMPLATE_FAILED",
+      message: error instanceof Error ? error.message : "Plan template failed"
+    });
+  }
+});
 
-  res.setHeader(
-    "Content-Type",
-    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-  );
-  res.setHeader("Content-Disposition", "attachment; filename=\"plan-template.xlsx\"");
-  await workbook.xlsx.write(res);
-  res.end();
+/**
+ * List merged question field ids / display names for selected classIds (for template column picker).
+ */
+runsRouter.post("/plan-template-fields", async (req, res) => {
+  const parsed = planTemplateClassesSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "marketContext and classIds (1–40) are required"
+    });
+  }
+
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    return sendError(
+      res,
+      {
+        code: "WAYFAIR_NOT_CONFIGURED",
+        message: "Wayfair credentials not configured"
+      },
+      400
+    );
+  }
+
+  const marketContext = parseWayfairMarketContext(parsed.data.marketContext);
+  if (!marketContext) {
+    return sendError(
+      res,
+      {
+        code: "INVALID_MARKET_CONTEXT",
+        message: "Invalid marketContext"
+      },
+      400
+    );
+  }
+
+  try {
+    const questionCols = await buildMergedQuestionColumnsForClasses({
+      classIds: parsed.data.classIds,
+      supplierId: settings.supplierId,
+      marketContext,
+      credentials: {
+        env: settings.env,
+        clientId: settings.clientId.trim(),
+        clientSecret: settings.clientSecret.trim(),
+        audience: settings.audience.trim()
+      }
+    });
+    res.json({
+      fields: questionCols.map((c) => ({
+        id: c.fieldId,
+        displayName: c.displayName
+      }))
+    });
+  } catch (error) {
+    sendError(res, {
+      code: "PLAN_TEMPLATE_FIELDS_FAILED",
+      message: error instanceof Error ? error.message : "Plan template fields failed"
+    });
+  }
+});
+
+/**
+ * Build Plan template with merged question columns from selected taxonomy classIds
+ * (productAddition.questions per class, deduped by question id).
+ */
+runsRouter.post("/plan-template", async (req, res) => {
+  const parsed = planTemplatePostSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return sendError(res, {
+      code: "INVALID_INPUT",
+      message: "marketContext and classIds (1–40) are required"
+    });
+  }
+
+  const settings = getWayfairActiveSettings();
+  if (!settings) {
+    return sendError(
+      res,
+      {
+        code: "WAYFAIR_NOT_CONFIGURED",
+        message: "Wayfair credentials not configured"
+      },
+      400
+    );
+  }
+
+  const marketContext = parseWayfairMarketContext(parsed.data.marketContext);
+  if (!marketContext) {
+    return sendError(
+      res,
+      {
+        code: "INVALID_MARKET_CONTEXT",
+        message: "Invalid marketContext"
+      },
+      400
+    );
+  }
+
+  try {
+    const mergedQuestionCols = await buildMergedQuestionColumnsForClasses({
+      classIds: parsed.data.classIds,
+      supplierId: settings.supplierId,
+      marketContext,
+      credentials: {
+        env: settings.env,
+        clientId: settings.clientId.trim(),
+        clientSecret: settings.clientSecret.trim(),
+        audience: settings.audience.trim()
+      }
+    });
+    const questionCols =
+      parsed.data.questionIds === undefined
+        ? mergedQuestionCols
+        : pickQuestionColumnsByIds(mergedQuestionCols, parsed.data.questionIds);
+    const columns = [...PLAN_BASE_COLUMNS, ...questionCols];
+    const buf = await buildPlanTemplateXlsxBuffer(columns);
+    res.setHeader(
+      "Content-Type",
+      "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+    );
+    res.setHeader("Content-Disposition", "attachment; filename=\"plan-template.xlsx\"");
+    res.send(buf);
+  } catch (error) {
+    sendError(res, {
+      code: "PLAN_TEMPLATE_FAILED",
+      message: error instanceof Error ? error.message : "Plan template failed"
+    });
+  }
 });
 
 runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
@@ -311,23 +473,19 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     });
   }
 
-  const headerRow = sheet.getRow(1);
-  const headerMap = new Map<string, number>();
-  headerRow.eachCell((cell: { text?: string; value?: unknown }, colNumber: number) => {
-    const header = readCellText(cell);
-    if (header) {
-      headerMap.set(header, colNumber);
-    }
-  });
-  const requiredHeaders = ["产品链接", "SKU", "Part Number", "时间"];
-  const missingHeaders = requiredHeaders.filter((name) => !headerMap.has(name));
-  if (missingHeaders.length > 0) {
+  const idParse = parsePlanFieldIdRow(sheet);
+  if (!idParse.ok) {
     return sendError(res, {
       code: "INVALID_INPUT",
-      message: `missing headers: ${missingHeaders.join(", ")}`
+      message: idParse.error
     });
   }
+  const colByFieldId = idParse.colByFieldId;
+  const questionColumns = [...colByFieldId.entries()]
+    .filter(([fieldId]) => !PLAN_BASE_FIELD_IDS.has(fieldId))
+    .map(([questionId, col]) => ({ questionId, col }));
 
+  deleteAllPlanItemAnswers();
   deactivateAllPlanItems();
 
   const errors: Array<{ row: number; message: string }> = [];
@@ -337,15 +495,24 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
   const seenRowHashes = new Set<string>();
   const seenGroupIds = new Set<string>();
 
-  for (let rowNumber = 2; rowNumber <= sheet.rowCount; rowNumber += 1) {
+  for (let rowNumber = 3; rowNumber <= sheet.rowCount; rowNumber += 1) {
     const row = sheet.getRow(rowNumber);
-    const amazonUrl = readCellText(row.getCell(headerMap.get("产品链接")!));
-    const sku = readCellText(row.getCell(headerMap.get("SKU")!));
-    const partNumber = readCellText(row.getCell(headerMap.get("Part Number")!));
-    const upc = headerMap.has("UPC") ? readCellText(row.getCell(headerMap.get("UPC")!)) : "";
-    const planDateCell = row.getCell(headerMap.get("时间")!);
+    const amazonUrl = readPlanExcelCellText(row.getCell(colByFieldId.get("amazonUrl")!));
+    const sku = readPlanExcelCellText(row.getCell(colByFieldId.get("sku")!));
+    const partNumber = readPlanExcelCellText(row.getCell(colByFieldId.get("partNumber")!));
+    const upc = colByFieldId.has("upc")
+      ? readPlanExcelCellText(row.getCell(colByFieldId.get("upc")!))
+      : "";
+    const planDateCell = row.getCell(colByFieldId.get("planDate")!);
+    const planDateStr = readPlanExcelCellText(planDateCell);
+    const planDateRaw = planDateCell.value;
+    const hasPlanDateValue =
+      planDateStr !== "" ||
+      planDateRaw instanceof Date ||
+      (typeof planDateRaw === "number" && Number.isFinite(planDateRaw)) ||
+      (typeof planDateRaw === "string" && planDateRaw.trim() !== "");
 
-    if (!amazonUrl && !sku && !partNumber && !planDateCell.value) {
+    if (!amazonUrl && !sku && !partNumber && !hasPlanDateValue) {
       continue;
     }
     rowCount += 1;
@@ -362,12 +529,21 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
     }
     validCount += 1;
 
+    const planAnswersForHash = questionColumns
+      .map(({ questionId, col }) => ({
+        q: questionId,
+        v: readPlanExcelCellText(row.getCell(col))
+      }))
+      .filter((x) => x.v)
+      .sort((a, b) => a.q.localeCompare(b.q));
+
     const rowHash = hashInput({
       amazonUrl,
       sku,
       partNumber,
       upc,
-      planDate: parsedDate.key
+      planDate: parsedDate.key,
+      planAnswers: planAnswersForHash
     });
     if (seenRowHashes.has(rowHash)) {
       continue;
@@ -402,6 +578,14 @@ runsRouter.post("/plan-import", upload.single("file"), async (req, res) => {
       isPrimary
     });
     if (planItem) {
+      const answerInputs = questionColumns
+        .map(({ questionId, col }) => {
+          const raw = readPlanExcelCellText(row.getCell(col));
+          const values = splitPlanCellMultiValues(raw);
+          return { questionId, rawValue: raw, values };
+        })
+        .filter((a) => a.values.length > 0);
+      replacePlanItemAnswers(planItem.id, answerInputs);
       activatedCount += 1;
     }
   }
@@ -506,7 +690,12 @@ runsRouter.post("/", async (req, res) => {
     });
   }
 
-  const run = createRun(parsed.data);
+  const { agentModifiers, ...runFields } = parsed.data;
+  const sanitizedModifiers = sanitizeAgentModifiers(agentModifiers);
+  const run = createRun({
+    ...runFields,
+    ...(sanitizedModifiers ? { agentModifiers: sanitizedModifiers } : {})
+  });
   if (parsed.data.enumerateVariants === undefined) {
     const defaults = getAppSettings();
     if (defaults.enumerateVariantsDefault) {
@@ -601,7 +790,16 @@ runsRouter.get("/:runId/products", (req, res) => {
         price: product.price,
         availability: product.availability,
         imageName,
-        imageUrl: primaryUrl
+        imageUrl: primaryUrl,
+        scrapedImages: imageIndex?.items ?? [],
+        generatedImages: listRunGeneratedImageEntries(run.id, product.asin),
+        remoteImageUrls: Array.from(
+          new Set(
+            [...product.images.all, ...product.images.description].filter(
+              (u): u is string => typeof u === "string" && u.length > 0
+            )
+          )
+        )
       };
     })
     .filter(Boolean);
@@ -632,7 +830,11 @@ runsRouter.get("/:runId/products/:asin", (req, res) => {
     );
   }
   const imageIndex = readRunImageIndex(run.id, req.params.asin) ?? undefined;
-  res.json({ product: cached.product, images: imageIndex });
+  res.json({
+    product: cached.product,
+    images: imageIndex,
+    generatedImages: listRunGeneratedImageEntries(run.id, req.params.asin)
+  });
 });
 
 runsRouter.get("/:runId/images/:asin/:imageName", (req, res) => {

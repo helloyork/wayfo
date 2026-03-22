@@ -1,6 +1,10 @@
 import fs from "fs";
 import path from "path";
 import { dataRoot, ensureDir } from "../paths";
+import {
+  DEFAULT_OPENAI_IMAGE_MODEL,
+  isValidOpenAiImageModel
+} from "../openaiImageModel";
 
 type HasDataSettings = {
   apiKey: string;
@@ -11,6 +15,8 @@ type AppSettings = {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
   timezone: string;
+  /** Global Wayfair answer prompt modifiers (list of blocks). */
+  agentModifiers?: { wayfairAnswers?: string[] };
   updatedAt: string;
 };
 
@@ -34,6 +40,8 @@ type WayfairSettings = {
 type OpenAiSettings = {
   apiKey: string;
   updatedAt: string;
+  /** Stored when user overrides; omitted means use DEFAULT_OPENAI_IMAGE_MODEL. */
+  imageModel?: string;
 };
 
 type R2Settings = {
@@ -231,6 +239,7 @@ export function getAppSettings() {
     enumerateVariantsDefault: settings?.enumerateVariantsDefault ?? false,
     primaryImageCandidateCount: settings?.primaryImageCandidateCount ?? 4,
     timezone: settings?.timezone ?? "UTC",
+    agentModifiers: settings?.agentModifiers,
     updatedAt: settings?.updatedAt ?? null
   };
 }
@@ -239,11 +248,18 @@ export function setAppSettings(input: {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
   timezone: string;
+  agentModifiers?: { wayfairAnswers?: string[] };
+  /** When true, replace stored agentModifiers with `agentModifiers` (including clearing). */
+  replaceAgentModifiers?: boolean;
 }) {
+  const previous = readAppSettings();
   const next: AppSettings = {
     enumerateVariantsDefault: input.enumerateVariantsDefault,
     primaryImageCandidateCount: input.primaryImageCandidateCount,
     timezone: input.timezone,
+    agentModifiers: input.replaceAgentModifiers
+      ? input.agentModifiers
+      : previous?.agentModifiers,
     updatedAt: new Date().toISOString()
   };
   writeAppSettings(next);
@@ -311,6 +327,15 @@ export function getOpenAiApiKey() {
   return readOpenAiSettings()?.apiKey ?? null;
 }
 
+/** Effective model for `images.edit` (validated stored value or default). */
+export function getOpenAiImageModel(): string {
+  const raw = readOpenAiSettings()?.imageModel?.trim();
+  if (raw && isValidOpenAiImageModel(raw)) {
+    return raw;
+  }
+  return DEFAULT_OPENAI_IMAGE_MODEL;
+}
+
 export function getOpenAiSettingsMeta() {
   const settings = readOpenAiSettings();
   if (!settings) {
@@ -321,13 +346,44 @@ export function getOpenAiSettingsMeta() {
   };
 }
 
-export function setOpenAiApiKey(apiKey: string) {
+/**
+ * Save API key; preserves stored imageModel when valid.
+ * Pass `imageModel` to set or replace the image model in the same write.
+ */
+export function setOpenAiApiKey(apiKey: string, imageModel?: string) {
+  const prev = readOpenAiSettings();
+  let resolvedModel: string | undefined;
+  if (imageModel !== undefined) {
+    if (!isValidOpenAiImageModel(imageModel)) {
+      throw new Error("Invalid OpenAI image model");
+    }
+    resolvedModel = imageModel.trim();
+  } else if (prev?.imageModel && isValidOpenAiImageModel(prev.imageModel)) {
+    resolvedModel = prev.imageModel;
+  }
   const next: OpenAiSettings = {
     apiKey,
-    updatedAt: new Date().toISOString()
+    updatedAt: new Date().toISOString(),
+    ...(resolvedModel ? { imageModel: resolvedModel } : {})
   };
   writeOpenAiSettings(next);
   return next;
+}
+
+/** Update image model only; requires an existing API key. */
+export function setOpenAiImageModel(imageModel: string) {
+  const prev = readOpenAiSettings();
+  if (!prev?.apiKey) {
+    throw new Error("OpenAI API Key not configured");
+  }
+  if (!isValidOpenAiImageModel(imageModel)) {
+    throw new Error("Invalid OpenAI image model");
+  }
+  writeOpenAiSettings({
+    ...prev,
+    imageModel: imageModel.trim(),
+    updatedAt: new Date().toISOString()
+  });
 }
 
 function readR2Settings(): R2Settings | null {

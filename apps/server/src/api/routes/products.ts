@@ -4,6 +4,7 @@ import path from "path";
 import { sendError } from "../errors";
 import { listRuns } from "../../core/store/runStore";
 import { readRunCache, readRunImageIndex } from "../../core/amazon/cache";
+import { listRunGeneratedImageEntries } from "../../core/images/runGeneratedArtifact";
 import { runsRoot } from "../../core/paths";
 
 export const productsRouter = Router();
@@ -83,25 +84,7 @@ function listProductsForRun(runId: string, runStatus: string, runCreatedAt: stri
 }
 
 function listGeneratedImages(runId: string, asin: string) {
-  const artifactPath = path.join(runsRoot, runId, "artifacts", "images", "generated.json");
-  if (!fs.existsSync(artifactPath)) {
-    return [];
-  }
-  const payload = JSON.parse(fs.readFileSync(artifactPath, "utf-8")) as {
-    results?: Record<string, Array<{ generatedPath: string }>>;
-  };
-  const images = payload.results?.[asin] ?? [];
-  return images
-    .map((image) => {
-      const fileName = path.basename(image.generatedPath);
-      const type = path.basename(path.dirname(image.generatedPath));
-      return {
-        type,
-        fileName,
-        path: `/api/runs/${runId}/generated-images/${asin}/${type}/${encodeURIComponent(fileName)}`
-      };
-    })
-    .filter((item) => item.fileName);
+  return listRunGeneratedImageEntries(runId, asin);
 }
 
 productsRouter.get("/", (_req, res) => {

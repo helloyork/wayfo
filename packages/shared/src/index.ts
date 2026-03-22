@@ -63,6 +63,17 @@ export const JobSchema = z.object({
 });
 export type Job = z.infer<typeof JobSchema>;
 
+/** Optional per-step prompt injection (e.g. Wayfair catalog answer hints). */
+export const AgentModifiersSchema = z.object({
+  wayfairAnswers: z.array(z.string()).optional()
+});
+export type AgentModifiers = z.infer<typeof AgentModifiersSchema>;
+
+/** Limits for Wayfair answer prompt modifier blocks (aligned with server enforcement). */
+export const WAYFAIR_ANSWERS_MODIFIER_MAX_ITEMS = 20;
+export const WAYFAIR_ANSWERS_MODIFIER_MAX_CHARS_PER_ITEM = 4000;
+export const WAYFAIR_ANSWERS_MODIFIER_MAX_TOTAL_CHARS = 12000;
+
 export const RunSchema = z.object({
   id: z.string(),
   amazonUrl: z.string(),
@@ -71,6 +82,7 @@ export const RunSchema = z.object({
   enumerateVariants: z.boolean().optional(),
   groupId: z.string().optional(),
   planItemId: z.string().optional(),
+  agentModifiers: AgentModifiersSchema.optional(),
   status: RunStatusSchema,
   currentStep: StepSchema.optional(),
   costUsd: z.number().optional(),

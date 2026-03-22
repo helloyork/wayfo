@@ -13,12 +13,14 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
+import { AgentModifierBlocksEditor } from "./AgentModifierBlocksEditor";
 
 type AppSettingsResponse = {
   enumerateVariantsDefault: boolean;
   primaryImageCandidateCount: number;
   timezone: string;
   updatedAt: string | null;
+  agentModifiers?: { wayfairAnswers?: string[] };
 };
 
 const fallbackTimezones = [
@@ -83,6 +85,7 @@ export function RunDefaultsSettings() {
     setPrimaryImageCandidateCount(payload.primaryImageCandidateCount ?? 4);
     setTimezone(payload.timezone || "UTC");
     setUpdatedAt(payload.updatedAt);
+    setWayfairModifierBlocks(payload.agentModifiers?.wayfairAnswers ?? []);
   };
 
   useEffect(() => {
@@ -177,6 +180,18 @@ export function RunDefaultsSettings() {
               </option>
             ))}
           </select>
+        </div>
+        <div className="flex flex-col gap-2 border-t border-border pt-4">
+          <Label>全局 Agent 修改器（Wayfair 填答）</Label>
+          <span className="text-sm text-muted-foreground">
+            与创建 Run 页的「全局修改器」为同一配置，保存在本地设置文件中。保存本卡片会写入；Orchestrator
+            在填答时注入（计划表硬覆盖优先）。
+          </span>
+          <AgentModifierBlocksEditor
+            idPrefix="settings-modifier"
+            blocks={wayfairModifierBlocks}
+            onChange={setWayfairModifierBlocks}
+          />
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Button type="button" onClick={onSave} disabled={loading}>

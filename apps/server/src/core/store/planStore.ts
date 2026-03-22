@@ -22,6 +22,16 @@ export type PlanItem = {
   createdAt: string;
 };
 
+/** User-provided Wayfair question answers from Plan Excel (per plan row). */
+export type PlanItemAnswer = {
+  id: string;
+  planItemId: string;
+  questionId: string;
+  rawValue: string | null;
+  values: string[];
+  createdAt: string;
+};
+
 export function getProductGroupByAsin(asin: string): ProductGroup | null {
   const db = getDb();
   const row = db.prepare(
@@ -227,4 +237,77 @@ export function listActivePlanItemsByDate(planDate: string): PlanItem[] {
     isActive: row.isActive === 1,
     isPrimary: row.isPrimary === 1
   }));
+}
+
+/** Remove all plan answer rows (call before re-import to avoid orphans). */
+export function deleteAllPlanItemAnswers() {
+  const db = getDb();
+  db.prepare("delete from plan_item_answers").run();
+}
+
+export function replacePlanItemAnswers(
+  planItemId: string,
+  answers: Array<{ questionId: string; rawValue: string; values: string[] }>
+) {
+  const db = getDb();
+  const now = new Date().toISOString();
+  db.prepare("delete from plan_item_answers where planItemId = @planItemId").run({ planItemId });
+  const insert = db.prepare(
+    `
+      insert into plan_item_answers (id, planItemId, questionId, rawValue, valuesJson, createdAt)
+      values (@id, @planItemId, @questionId, @rawValue, @valuesJson, @createdAt)
+    `
+  );
+  for (const answer of answers) {
+    if (!answer.questionId.trim()) continue;
+    insert.run({
+      id: nanoid(),
+      planItemId,
+      questionId: answer.questionId.trim(),
+      rawValue: answer.rawValue.trim() ? answer.rawValue.trim() : null,
+      valuesJson: JSON.stringify(answer.values),
+      createdAt: now
+    });
+  }
+}
+
+export function listPlanItemAnswers(planItemId: string): PlanItemAnswer[] {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `
+        select id, planItemId, questionId, rawValue, valuesJson, createdAt
+        from plan_item_answers
+        where planItemId = @planItemId
+        order by createdAt asc, questionId asc
+      `
+    )
+    .all({ planItemId }) as Array<{
+    id: string;
+    planItemId: string;
+    questionId: string;
+    rawValue: string | null;
+    valuesJson: string;
+    createdAt: string;
+  }>;
+  return rows.map((row) => ({
+    id: row.id,
+    planItemId: row.planItemId,
+    questionId: row.questionId,
+    rawValue: row.rawValue,
+    values: safeParseValuesJson(row.valuesJson),
+    createdAt: row.createdAt
+  }));
+}
+
+function safeParseValuesJson(valuesJson: string): string[] {
+  try {
+    const parsed = JSON.parse(valuesJson) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.map((v) => String(v ?? "").trim()).filter(Boolean);
+  } catch {
+    return [];
+  }
 }

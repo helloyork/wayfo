@@ -7,6 +7,8 @@ import type {
 } from "@wayfo/shared";
 import type { AmazonProductSnapshot } from "../amazon/normalize";
 import { generateWayfairAnswers } from "./answers";
+import { flattenQuestions } from "./answerRules";
+import { mergeGeneratedAnswersWithPlan, planEntriesToWayfairAnswers } from "./planAnswerMerge";
 
 const coreQuestionIds = new Set([
   "core::manufacturerId",
@@ -70,6 +72,31 @@ export type RewrittenContentInput = {
   bullets?: string[];
 };
 
+/** Optional Plan Excel overrides: questionId -> one or more cell values (after split). */
+export type PlanAnswerEntry = {
+  questionId: string;
+  values: string[];
+};
+
+function applyPlanAnswerMerge(
+  questions: WayfairProductAdditionQuestion[],
+  generatedAnswers: Array<{
+    questionId: string;
+    value: string;
+    parentRank?: number;
+    rank?: number;
+  }>,
+  planAnswerEntries?: PlanAnswerEntry[] | null
+) {
+  if (!planAnswerEntries?.length) {
+    return sanitizeAnswers(generatedAnswers);
+  }
+  const questionMap = new Map(flattenQuestions(questions).map((q) => [q.id, q]));
+  const planWayfair = planEntriesToWayfairAnswers(questionMap, planAnswerEntries);
+  const merged = mergeGeneratedAnswersWithPlan(generatedAnswers, planWayfair);
+  return sanitizeAnswers(merged);
+}
+
 export async function buildWayfairSubmitRequest(input: {
   snapshot: AmazonProductSnapshot;
   classId: number;
@@ -82,6 +109,8 @@ export async function buildWayfairSubmitRequest(input: {
   uploadedImageUrls?: string[] | null;
   rewrittenContent?: RewrittenContentInput | null;
   universalProductCode?: string | null;
+  planAnswerEntries?: PlanAnswerEntry[] | null;
+  promptModifier?: string | null;
 }) {
   const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
@@ -191,6 +220,8 @@ export async function buildWayfairBatchSubmitRequest(input: {
   mediaMetaDataTags: WayfairMediaMetaDataTagSet[];
   manufacturerId?: string | null;
   universalProductCode?: string | null;
+  planAnswerEntries?: PlanAnswerEntry[] | null;
+  promptModifier?: string | null;
 }): Promise<VariantBatchBuildResult> {
   const manufacturerId = pickManufacturerId(input.brandAssociations, input.manufacturerId);
   if (!manufacturerId) {
@@ -230,19 +261,19 @@ export async function buildWayfairBatchSubmitRequest(input: {
     const answerResult = await generateWayfairAnswers({
       snapshot: variant.snapshot,
       questions: input.questions,
-      skipQuestionIds: Array.from(skipQuestionIds)
+      skipQuestionIds: Array.from(skipQuestionIds),
+      ...(input.promptModifier?.trim() ? { promptModifier: input.promptModifier.trim() } : {})
     });
     answerResults.set(variant.asin, answerResult);
 
     const rawAnswers = (answerResult.data as { answers?: unknown }).answers;
-    const answers = Array.isArray(rawAnswers)
-      ? sanitizeAnswers(
-          rawAnswers.filter(
-            (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
-              item && typeof item === "object" && "questionId" in item && "value" in item
-          )
+    const generated = Array.isArray(rawAnswers)
+      ? rawAnswers.filter(
+          (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
+            item && typeof item === "object" && "questionId" in item && "value" in item
         )
       : [];
+    const answers = applyPlanAnswerMerge(input.questions, generated, input.planAnswerEntries);
 
     const productName = variant.rewrittenContent?.productName ?? variant.snapshot.title;
     const featureBullets = variant.rewrittenContent?.bullets?.slice(0, 6) ?? variant.snapshot.bullets?.slice(0, 6) ?? null;
