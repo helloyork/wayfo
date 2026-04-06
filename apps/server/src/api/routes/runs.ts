@@ -7,6 +7,7 @@ import multer from "multer";
 import { z } from "zod";
 import {
   RunEvent,
+  WayfairAnswer,
   WayfairProductAdditionQuestion,
   WayfairSubmitProductAdditionsRequest
 } from "@wayfo/shared";
@@ -62,6 +63,7 @@ import {
   AgentModifiersPayloadSchema,
   sanitizeAgentModifiers
 } from "../../core/wayfair/agentModifiers";
+import { flattenQuestions, normalizeAnswersForPart } from "../../core/wayfair/answerRules";
 
 export const runsRouter = Router();
 
@@ -214,6 +216,11 @@ function readSubmitDraft(runId: string) {
   return readJsonWithMeta<unknown>(fullPath);
 }
 
+function readSubmitAnswers(runId: string) {
+  const fullPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submit", "answers.json");
+  return readJson<unknown>(fullPath);
+}
+
 function readLatestJsonInDir<T>(dirPath: string, prefix: string) {
   if (!fs.existsSync(dirPath)) {
     return null;
@@ -251,14 +258,210 @@ function getGeneratedImagesDir(runId: string, asin: string, type: string) {
   return path.join(runsRoot, runId, "artifacts", "images", "generated", asin, type);
 }
 
+type ReviewAddition = WayfairSubmitProductAdditionsRequest["proposedProductAdditions"][number];
+type ReviewPart = ReviewAddition["parts"][number];
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function toWayfairAnswer(value: unknown): WayfairAnswer | null {
+  if (!isRecord(value) || typeof value.questionId !== "string") {
+    return null;
+  }
+  const questionId = value.questionId.trim();
+  if (!questionId) {
+    return null;
+  }
+  const rawValue = value.value;
+  if (typeof rawValue !== "string" && typeof rawValue !== "number") {
+    return null;
+  }
+  const answer: WayfairAnswer = {
+    questionId,
+    value: String(rawValue)
+  };
+  if (typeof value.parentRank === "number" && Number.isInteger(value.parentRank)) {
+    answer.parentRank = value.parentRank;
+  }
+  if (typeof value.rank === "number" && Number.isInteger(value.rank)) {
+    answer.rank = value.rank;
+  }
+  return answer;
+}
+
+function getSubmittedAdditions(request: Record<string, unknown>) {
+  const additions = request.proposedProductAdditions;
+  if (!Array.isArray(additions)) {
+    return [];
+  }
+  return additions.filter(isRecord);
+}
+
+function getSubmittedParts(addition: Record<string, unknown> | undefined) {
+  if (!addition || !Array.isArray(addition.parts)) {
+    return [];
+  }
+  return addition.parts.filter(isRecord);
+}
+
+function findSubmittedAddition(
+  additions: Record<string, unknown>[],
+  baseAddition: ReviewAddition,
+  index: number
+) {
+  const byClassId = additions.find((candidate) => candidate.classId === baseAddition.classId);
+  return byClassId ?? additions[index];
+}
+
+function findSubmittedPart(parts: Record<string, unknown>[], basePart: ReviewPart, index: number) {
+  const bySupplierPartNumber = parts.find(
+    (candidate) => candidate.supplierPartNumber === basePart.supplierPartNumber
+  );
+  return bySupplierPartNumber ?? parts[index];
+}
+
+function shouldMergeSparseAnswers(
+  submittedPart: Record<string, unknown> | undefined,
+  baseAnswers: WayfairAnswer[],
+  submittedAnswers: WayfairAnswer[] | null
+) {
+  if (!submittedPart || submittedAnswers === null) {
+    return true;
+  }
+  const missingCoreFields =
+    !Object.prototype.hasOwnProperty.call(submittedPart, "amazonStandardIdentificationNumber") ||
+    !Object.prototype.hasOwnProperty.call(submittedPart, "productName") ||
+    !Object.prototype.hasOwnProperty.call(submittedPart, "media");
+  if (missingCoreFields) {
+    return true;
+  }
+  if (baseAnswers.length < 4) {
+    return false;
+  }
+  return submittedAnswers.length <= Math.max(2, Math.floor(baseAnswers.length / 2));
+}
+
+function extractFallbackAnswersByPart(
+  baseRequest: WayfairSubmitProductAdditionsRequest,
+  rawAnswers: unknown
+) {
+  const byPart = new Map<string, WayfairAnswer[]>();
+  const assignAnswers = (supplierPartNumber: string | undefined, value: unknown) => {
+    if (!supplierPartNumber || !isRecord(value) || !isRecord(value.data) || !Array.isArray(value.data.answers)) {
+      return;
+    }
+    const answers = value.data.answers.map(toWayfairAnswer).filter(Boolean) as WayfairAnswer[];
+    if (answers.length > 0) {
+      byPart.set(supplierPartNumber, answers);
+    }
+  };
+
+  const firstPartNumber = baseRequest.proposedProductAdditions[0]?.parts[0]?.supplierPartNumber;
+  assignAnswers(firstPartNumber, rawAnswers);
+
+  if (isRecord(rawAnswers)) {
+    for (const [key, value] of Object.entries(rawAnswers)) {
+      assignAnswers(key, value);
+    }
+  }
+
+  return byPart;
+}
+
 function normalizeReviewRequest(
   request: Record<string, unknown>,
-  questions: WayfairProductAdditionQuestion[]
+  questions: WayfairProductAdditionQuestion[],
+  baseRequest?: WayfairSubmitProductAdditionsRequest | null,
+  rawAnswers?: unknown
 ) {
-  void questions;
+  const questionMap = new Map(flattenQuestions(questions).map((question) => [question.id, question]));
+  const touched = new Set<string>();
+  let removedAnswers = 0;
+  let normalizedAnswers = 0;
+  let fixedRanks = 0;
+  const fallbackAnswersByPart = baseRequest ? extractFallbackAnswersByPart(baseRequest, rawAnswers) : new Map();
+
+  const normalizeAnswerList = (answers: WayfairAnswer[]) => {
+    const normalized = normalizeAnswersForPart(answers, questionMap, touched);
+    removedAnswers += normalized.removedAnswers;
+    normalizedAnswers += normalized.normalizedAnswers;
+    fixedRanks += normalized.fixedRanks;
+    return normalized.answers;
+  };
+
+  if (!baseRequest) {
+    return {
+      request,
+      summary: {
+        removedAnswers,
+        normalizedAnswers,
+        fixedRanks,
+        touchedQuestions: Array.from(touched)
+      }
+    };
+  }
+
+  const submittedAdditions = getSubmittedAdditions(request);
+  const nextRequest: WayfairSubmitProductAdditionsRequest = {
+    ...baseRequest,
+    supplierId:
+      typeof request.supplierId === "string" && request.supplierId.trim()
+        ? request.supplierId.trim()
+        : baseRequest.supplierId,
+    ignoreWarnings:
+      typeof request.ignoreWarnings === "boolean" ? request.ignoreWarnings : baseRequest.ignoreWarnings,
+    rejectAllOnErrors:
+      typeof request.rejectAllOnErrors === "boolean"
+        ? request.rejectAllOnErrors
+        : baseRequest.rejectAllOnErrors,
+    proposedProductAdditions: baseRequest.proposedProductAdditions.map((baseAddition, additionIndex) => {
+      const submittedAddition = findSubmittedAddition(submittedAdditions, baseAddition, additionIndex);
+      const submittedParts = getSubmittedParts(submittedAddition);
+      return {
+        ...baseAddition,
+        ...(submittedAddition ?? {}),
+        parts: baseAddition.parts.map((basePart, partIndex) => {
+          const submittedPart = findSubmittedPart(submittedParts, basePart, partIndex);
+          const submittedAnswers = submittedPart && Array.isArray(submittedPart.answers)
+            ? submittedPart.answers.map(toWayfairAnswer).filter(Boolean) as WayfairAnswer[]
+            : null;
+          const fallbackAnswers = fallbackAnswersByPart.get(basePart.supplierPartNumber) ?? [];
+          const baseAnswers =
+            fallbackAnswers.length > (basePart.answers?.length ?? 0)
+              ? fallbackAnswers
+              : (basePart.answers ?? []);
+          const mergedAnswers =
+            submittedAnswers === null
+              ? baseAnswers
+              : shouldMergeSparseAnswers(submittedPart, baseAnswers, submittedAnswers)
+                ? [
+                    ...baseAnswers.filter(
+                      (answer: WayfairAnswer) =>
+                        !submittedAnswers.some(
+                          (candidate: WayfairAnswer) => candidate.questionId === answer.questionId
+                        )
+                    ),
+                    ...submittedAnswers
+                  ]
+                : submittedAnswers;
+          return {
+            ...basePart,
+            ...(submittedPart ?? {}),
+            answers: normalizeAnswerList(mergedAnswers)
+          };
+        })
+      };
+    })
+  };
   return {
-    request,
-    summary: { removedAnswers: 0, normalizedAnswers: 0, fixedRanks: 0, touchedQuestions: [] }
+    request: nextRequest,
+    summary: {
+      removedAnswers,
+      normalizedAnswers,
+      fixedRanks,
+      touchedQuestions: Array.from(touched)
+    }
   };
 }
 
@@ -1115,12 +1318,24 @@ runsRouter.post("/:runId/wayfair/draft", async (req, res) => {
       message: "request is required"
     });
   }
+  const questions = readQuestionsArtifact(run.id);
+  const baseRequest = readSubmitRequest(run.id);
+  const rawAnswers = readSubmitAnswers(run.id);
   try {
+    const normalized =
+      questions && baseRequest
+        ? normalizeReviewRequest(
+            parsed.data.request,
+            questions,
+            baseRequest.data as WayfairSubmitProductAdditionsRequest,
+            rawAnswers
+          )
+        : { request: parsed.data.request };
     createArtifact({
       runId: run.id,
       type: "wayfair/submit/draft",
       relativePath: "wayfair/submit/draft.json",
-      content: parsed.data.request
+      content: normalized.request
     });
     res.json({ ok: true });
   } catch (error) {
@@ -1157,8 +1372,21 @@ runsRouter.post("/:runId/wayfair/review", async (req, res) => {
       message: "Wayfair questions not found"
     });
   }
+  const baseRequest = readSubmitRequest(run.id);
+  const rawAnswers = readSubmitAnswers(run.id);
+  if (!baseRequest) {
+    return sendError(res, {
+      code: "REQUEST_NOT_FOUND",
+      message: "Wayfair submit request not found"
+    }, 404);
+  }
   try {
-    const normalized = normalizeReviewRequest(parsed.data.request, questions);
+    const normalized = normalizeReviewRequest(
+      parsed.data.request,
+      questions,
+      baseRequest.data as WayfairSubmitProductAdditionsRequest,
+      rawAnswers
+    );
     await resumeWayfairAfterReview(
       run.id,
       normalized.request as WayfairSubmitProductAdditionsRequest
