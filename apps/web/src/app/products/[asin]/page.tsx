@@ -62,17 +62,28 @@ export default async function ProductDetailPage({
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-4">
-        <Link
-          href="/products"
-          className="text-sm text-primary hover:underline"
-        >
-          返回产品列表
-        </Link>
+      <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/products"
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            ← 产品总览
+          </Link>
+          <Link
+            href={`/runs/${detail.runId}`}
+            className="text-sm font-medium text-primary hover:underline"
+          >
+            来源批次 · {detail.runId}
+          </Link>
+        </div>
         <span className="text-sm text-muted-foreground">
-          来源 Run: {detail.runId} · 状态: {detail.runStatus}
+          批次状态: {detail.runStatus} · 创建于 {detail.runCreatedAt}
         </span>
       </div>
+      <p className="text-xs text-muted-foreground">
+        说明：列表按 ASIN 展示；若多个批次处理同一 ASIN，详情页显示其中一条关联记录，完整列表见产品总览与批次页。
+      </p>
       <ProductDetail
         runId={detail.runId}
         product={detail.product}

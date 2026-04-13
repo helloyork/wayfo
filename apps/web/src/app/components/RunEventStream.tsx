@@ -9,6 +9,12 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from "@/components/ui/collapsible";
+import { ChevronDown } from "lucide-react";
 
 type RunEvent = {
   id: string;
@@ -19,7 +25,14 @@ type RunEvent = {
   data?: Record<string, unknown>;
 };
 
-export function RunEventStream({ runId }: { runId: string }) {
+export function RunEventStream({
+  runId,
+  defaultOpen = false,
+}: {
+  runId: string;
+  /** Collapsed by default to reduce noise on run detail (SSE still connects). */
+  defaultOpen?: boolean;
+}) {
   const [events, setEvents] = useState<RunEvent[]>([]);
   const [status, setStatus] = useState<string>("PENDING");
 
@@ -48,32 +61,45 @@ export function RunEventStream({ runId }: { runId: string }) {
   }, [sourceUrl]);
 
   return (
-    <Card className="shadow-sm">
-      <CardHeader className="pb-2">
-        <div className="flex flex-wrap items-center gap-2">
-          <CardTitle>事件流</CardTitle>
-          <Badge variant="secondary">状态: {status}</Badge>
-        </div>
-      </CardHeader>
-      <CardContent>
-        {events.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
-            暂无事件
-          </div>
-        ) : (
-          <div className="flex flex-col gap-1 font-mono text-sm text-muted-foreground">
-            {events.map((event) => (
-              <div key={event.id}>
-                {event.timestamp} · {event.type}{" "}
-                {event.step ? `(${event.step})` : ""} {event.message ?? ""}
-                {event.data?.err
-                  ? ` · ${JSON.stringify(event.data.err)}`
-                  : ""}
+    <Card
+      id="run-events"
+      className="scroll-mt-24 border-border/80 shadow-sm bg-muted/20"
+    >
+      <Collapsible defaultOpen={defaultOpen} className="group">
+        <CollapsibleTrigger className="w-full text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background">
+          <CardHeader className="cursor-pointer pb-2 transition-colors hover:bg-muted/40">
+            <div className="flex flex-wrap items-center gap-2">
+              <ChevronDown className="h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200 group-data-[state=open]:rotate-180" aria-hidden />
+              <CardTitle className="text-base">事件流</CardTitle>
+              <Badge variant="outline" className="font-normal">
+                状态: {status}
+              </Badge>
+              <span className="text-xs text-muted-foreground">调试与排错 · 点击展开</span>
+            </div>
+          </CardHeader>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          <CardContent>
+            {events.length === 0 ? (
+              <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-8 text-center text-sm text-muted-foreground">
+                暂无事件
               </div>
-            ))}
-          </div>
-        )}
-      </CardContent>
+            ) : (
+              <div className="flex max-h-72 flex-col gap-1 overflow-y-auto font-mono text-xs text-muted-foreground sm:text-sm">
+                {events.map((event) => (
+                  <div key={event.id}>
+                    {event.timestamp} · {event.type}{" "}
+                    {event.step ? `(${event.step})` : ""} {event.message ?? ""}
+                    {event.data?.err
+                      ? ` · ${JSON.stringify(event.data.err)}`
+                      : ""}
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </CollapsibleContent>
+      </Collapsible>
     </Card>
   );
 }

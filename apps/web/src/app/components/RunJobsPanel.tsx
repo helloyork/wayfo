@@ -10,6 +10,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 type RunJob = {
   id: string;
@@ -21,9 +22,11 @@ type RunJob = {
 type RunJobsPanelProps = {
   runId: string;
   initialJobs: RunJob[];
+  id?: string;
+  className?: string;
 };
 
-export function RunJobsPanel({ runId, initialJobs }: RunJobsPanelProps) {
+export function RunJobsPanel({ runId, initialJobs, id, className }: RunJobsPanelProps) {
   const [jobs, setJobs] = useState<RunJob[]>(initialJobs);
   const [loading, setLoading] = useState(false);
   const [lastUpdated, setLastUpdated] = useState<string | null>(null);
@@ -57,7 +60,10 @@ export function RunJobsPanel({ runId, initialJobs }: RunJobsPanelProps) {
   }, [refresh]);
 
   return (
-    <Card className="shadow-sm">
+    <Card
+      id={id}
+      className={cn("scroll-mt-24 shadow-sm", className)}
+    >
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <CardTitle>Jobs</CardTitle>

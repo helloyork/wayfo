@@ -65,14 +65,7 @@
   --border: #e2e8f0;
   --input: #e2e8f0;
   --ring: #40a8c4;
-  --sidebar: #ffffff;
-  --sidebar-foreground: #0f172a;
-  --sidebar-primary: #40a8c4;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #f1f5f9;
-  --sidebar-accent-foreground: #0f172a;
-  /* sidebar-border must be HSL (H S% L%) for Tailwind sidebar.border */
-  --sidebar-border: 214 32% 91%;
+  /* Sidebar colors: use HSL components only (see @layer base). Do not set hex here — Tailwind uses hsl(var(--sidebar-*)). */
 }
 
 .dark {
@@ -95,12 +88,4 @@
   --border: #334155;
   --input: #334155;
   --ring: #40a8c4;
-  --sidebar: #1e293b;
-  --sidebar-foreground: #f8fafc;
-  --sidebar-primary: #40a8c4;
-  --sidebar-primary-foreground: #ffffff;
-  --sidebar-accent: #334155;
-  --sidebar-accent-foreground: #f8fafc;
-  /* sidebar-border must be HSL (H S% L%) for Tailwind sidebar.border */
-  --sidebar-border: 217 33% 25%;
 }

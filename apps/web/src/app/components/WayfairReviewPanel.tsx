@@ -18,8 +18,7 @@ import {
   CollapsibleContent,
   CollapsibleTrigger,
 } from "@/components/ui/collapsible";
-import { Loader2, ChevronDown, ChevronRight, CheckCircle2 } from "lucide-react";
-import { motion } from "motion/react";
+import { Loader2, ChevronDown, ChevronRight } from "lucide-react";
 
 type Submission = {
   requestId: string;
@@ -71,7 +70,14 @@ type WayfairRequest = {
   }>;
 };
 
-export function WayfairReviewPanel({ runId }: { runId: string }) {
+export function WayfairReviewPanel({
+  runId,
+  sectionId = "run-review",
+}: {
+  runId: string;
+  /** Anchor for in-page navigation on run detail */
+  sectionId?: string;
+}) {
   const [submissions, setSubmissions] = useState<Submission[] | null>(null);
   const [suggestions, setSuggestions] = useState<RepairSuggestion[] | null>(null);
   const [requestText, setRequestText] = useState("");
@@ -394,15 +400,18 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
   const hasSuggestions = (suggestions?.length ?? 0) > 0;
 
   return (
-    <Card className="shadow-sm overflow-hidden">
-      <CardHeader className="pb-4">
+    <Card
+      id={sectionId}
+      className="scroll-mt-24 overflow-hidden border-primary/15 shadow-sm"
+    >
+      <CardHeader className="border-b border-border/60 bg-gradient-to-r from-primary/8 via-transparent to-transparent pb-4">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <CardTitle>Wayfair 审查与修复</CardTitle>
             <p className="mt-1 text-sm text-muted-foreground">
               {hasFlaws
-                ? "存在验证问题，请查看下方详情并修正后提交"
-                : "检查并修正后提交至 Wayfair"}
+                ? "优先处理验证问题与修复建议，再保存或提交"
+                : "核对答案与图片后保存草稿或提交至 Wayfair"}
             </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
@@ -442,49 +451,26 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
           </div>
         </div>
       </CardHeader>
-      <CardContent className="flex flex-col gap-5">
-        <RunProductImagePreview
-          runId={runId}
-          refreshSignal={imagePreviewRefreshSig}
-        />
+      <CardContent className="flex flex-col gap-6">
         {loading ? (
           <div className="text-sm text-muted-foreground">加载中...</div>
         ) : null}
 
-        <div className="flex flex-wrap items-center gap-3">
-          {error ? (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-            >
-              <Badge variant="destructive">{error}</Badge>
-            </motion.div>
-          ) : null}
+        <div className="flex flex-wrap items-center gap-2">
+          {error ? <Badge variant="destructive">{error}</Badge> : null}
           {submitStatus ? (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400"
-            >
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <Badge variant="success" className="max-w-full whitespace-normal font-normal">
               {submitStatus}
-            </motion.div>
+            </Badge>
           ) : null}
           {draftStatus ? (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2 }}
-              className="flex items-center gap-2 text-sm text-green-600 dark:text-green-400"
-            >
-              <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <Badge variant="secondary" className="max-w-full whitespace-normal font-normal">
               {draftStatus}
-            </motion.div>
+            </Badge>
           ) : null}
         </div>
 
+        <div className="flex flex-col gap-5 rounded-xl border border-primary/20 bg-gradient-to-b from-primary/6 via-background to-background p-4 sm:p-5">
         {/* Step 1: Validation flaws */}
         <section className="space-y-2">
           <h4 className="text-sm font-medium text-foreground">
@@ -502,12 +488,9 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
           ) : (
             <div className="flex flex-col gap-2">
               {flaws.map((flaw, index) => (
-                <motion.div
+                <div
                   key={`${flaw.questionId}-${index}`}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2, delay: index * 0.05 }}
-                  className="rounded-lg border border-border bg-muted/30 p-4"
+                  className="rounded-lg border border-border bg-muted/30 p-4 transition-colors hover:border-primary/25"
                 >
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge
@@ -520,7 +503,7 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
                     <span className="font-mono text-sm">{flaw.questionId}</span>
                   </div>
                   <p className="mt-2 text-sm text-muted-foreground">{flaw.flaw}</p>
-                </motion.div>
+                </div>
               ))}
             </div>
           )}
@@ -537,12 +520,9 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
             </h4>
             <div className="flex flex-col gap-2">
               {suggestions!.map((item, index) => (
-                <motion.div
+                <div
                   key={`${item.questionId}-${index}`}
-                  initial={{ opacity: 0, x: -8 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ duration: 0.2, delay: index * 0.05 }}
-                  className="rounded-lg border border-border bg-muted/30 p-4"
+                  className="rounded-lg border border-border bg-muted/30 p-4 transition-colors hover:border-primary/25"
                 >
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <div className="flex flex-wrap items-center gap-2">
@@ -569,7 +549,7 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
                       建议值: {item.suggestedValues.join(", ")}
                     </p>
                   ) : null}
-                </motion.div>
+                </div>
               ))}
             </div>
           </section>
@@ -588,17 +568,13 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
             </button>
           </CollapsibleTrigger>
           <CollapsibleContent>
-            <motion.div
-              initial={false}
-              animate={{ opacity: 1 }}
-              className="mt-2 flex flex-col gap-3"
-            >
+            <div className="mt-2 flex flex-col gap-3">
               {questionRows.length === 0 ? (
                 <div className="rounded-lg border border-dashed border-border bg-muted/50 px-4 py-6 text-center text-sm text-muted-foreground">
                   暂无问题数据
                 </div>
               ) : (
-                questionRows.map((row, idx) => {
+                questionRows.map((row) => {
                   const hasChoices =
                     (row.question.possibleAnswers?.length ?? 0) > 0;
                   const isMultiChoice =
@@ -606,12 +582,13 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
                     row.question.answerType === "MULTI_CHOICE";
                   const failed = failedQuestionIds.has(row.question.id);
                   return (
-                    <motion.div
+                    <div
                       key={row.question.id}
-                      initial={{ opacity: 0, y: 4 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.15, delay: idx * 0.02 }}
-                      className="flex flex-col gap-2 rounded-lg border border-border bg-muted/30 p-4"
+                      className={`flex flex-col gap-2 rounded-lg border bg-muted/30 p-4 transition-colors ${
+                        failed
+                          ? "border-destructive/50 hover:border-destructive/70"
+                          : "border-border hover:border-primary/20"
+                      }`}
                     >
                       <div className="flex flex-wrap items-center gap-2">
                         <span className="font-medium">
@@ -670,11 +647,27 @@ export function WayfairReviewPanel({ runId }: { runId: string }) {
                           }
                         />
                       )}
-                    </motion.div>
+                    </div>
                   );
                 })
               )}
-            </motion.div>
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+        </div>
+
+        <Collapsible defaultOpen={!hasFlaws}>
+          <CollapsibleTrigger className="flex w-full items-center justify-between gap-2 rounded-lg border border-border/80 bg-muted/15 px-3 py-2 text-left text-sm font-medium text-foreground outline-none transition-colors hover:bg-muted/30 focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background">
+            <span>产品图片预览</span>
+            <span className="text-xs font-normal text-muted-foreground">
+              {hasFlaws ? "处理问题时可先折叠" : "原图与生成图"}
+            </span>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="pt-3">
+            <RunProductImagePreview
+              runId={runId}
+              refreshSignal={imagePreviewRefreshSig}
+            />
           </CollapsibleContent>
         </Collapsible>
 

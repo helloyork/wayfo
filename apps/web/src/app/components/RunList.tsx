@@ -67,7 +67,7 @@ export function RunList({
             href="/runs"
             className="text-center text-sm text-muted-foreground hover:text-foreground hover:underline"
           >
-            查看全部 Run
+            查看全部批次
           </Link>
         ) : null}
       </CardContent>

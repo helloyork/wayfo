@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { apiBase } from "../../lib/api";
 import {
@@ -159,14 +160,22 @@ export function ProductDetail({
               {product.price?.before ? ` · 原价 ${product.price.before}` : ""}
               {product.price?.discount ? ` · ${product.price.discount}` : ""}
             </CardDescription>
-            <a
-              className="text-sm text-primary hover:underline"
-              href={product.canonicalUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              查看 Amazon 页面
-            </a>
+            <div className="flex flex-wrap gap-x-4 gap-y-2">
+              <a
+                className="text-sm font-medium text-primary hover:underline"
+                href={product.canonicalUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                查看 Amazon 页面
+              </a>
+              <Link
+                href={`/runs/${runId}`}
+                className="text-sm font-medium text-primary hover:underline"
+              >
+                查看来源批次
+              </Link>
+            </div>
           </CardHeader>
           <CardContent className="flex flex-col gap-4">
             <div>

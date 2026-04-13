@@ -835,6 +835,7 @@ runsRouter.post("/plan-run", async (req, res) => {
   let createdRuns = 0;
   let skippedExisting = 0;
   let skippedSecondary = 0;
+  const createdRunIds: string[] = [];
 
   for (const item of planItems) {
     if (!item.isPrimary) {
@@ -869,6 +870,7 @@ runsRouter.post("/plan-run", async (req, res) => {
         timestamp: new Date().toISOString()
       });
     });
+    createdRunIds.push(run.id);
     createdRuns += 1;
   }
 
@@ -880,7 +882,8 @@ runsRouter.post("/plan-run", async (req, res) => {
       createdRuns,
       skippedExisting,
       skippedSecondary
-    }
+    },
+    createdRunIds
   });
 });
 

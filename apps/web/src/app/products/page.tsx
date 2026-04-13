@@ -34,15 +34,23 @@ export default async function ProductsPage() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">产品总览</h2>
           <p className="text-sm text-muted-foreground">
-            按 ASIN 汇总展示全部产品
+            按 ASIN 汇总；关联批次请在卡片或详情中跳转
           </p>
         </div>
-        <Link
-          href="/runs"
-          className="text-sm text-muted-foreground hover:text-foreground hover:underline"
-        >
-          查看 Runs
-        </Link>
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/"
+            className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+          >
+            主界面
+          </Link>
+          <Link
+            href="/runs"
+            className="text-sm text-muted-foreground hover:text-foreground hover:underline"
+          >
+            全部批次
+          </Link>
+        </div>
       </div>
 
       <ProductGrid products={products} />

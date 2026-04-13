@@ -23,8 +23,12 @@ export default async function HomePage() {
       err instanceof Error ? err.message : "无法连接后端服务，请确认 Wayfo 服务已启动";
   }
 
-  const activeRun = runs[0];
   const recentRuns = runs.slice(0, 10);
+  const terminalStatuses = new Set(["COMPLETED", "CANCELLED", "FAILED"]);
+  const inProgressCount = runs.filter((r) => !terminalStatuses.has(r.status)).length;
+  const needsReviewCount = runs.filter(
+    (r) => r.status === "NEEDS_REVIEW" || r.status === "WAITING_FOR_REVIEW"
+  ).length;
 
   if (apiError) {
     return (
@@ -32,7 +36,7 @@ export default async function HomePage() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">主界面</h2>
           <p className="text-sm text-muted-foreground">
-            概览、Run 创建与最近执行
+            今日摘要与创建入口；后端未连接时请先启动服务
           </p>
         </div>
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-800 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200">
@@ -52,31 +56,38 @@ export default async function HomePage() {
         <div>
           <h2 className="text-2xl font-semibold tracking-tight">主界面</h2>
           <p className="text-sm text-muted-foreground">
-            概览、Run 创建与最近执行
+            今日摘要、创建 Run 与最近批次；完整列表请用侧栏「批次」或顶栏快捷入口
           </p>
         </div>
         <Link
           href="/runs"
           className="text-sm text-muted-foreground hover:text-foreground hover:underline"
         >
-          查看全部 Runs
+          全部批次
         </Link>
       </div>
 
       <DashboardStats
         items={[
-          { label: "总 Runs", value: String(runs.length) },
+          { label: "总批次", value: String(runs.length) },
           {
-            label: "活跃 Run",
-            value: activeRun ? "1" : "0",
-            hint: activeRun ? `当前: ${activeRun.id}` : "暂无",
+            label: "进行中",
+            value: String(inProgressCount),
+            hint: "未处于已完成 / 已取消 / 失败的批次",
           },
-          { label: "最近 10 个", value: String(recentRuns.length) },
+          {
+            label: "待审查",
+            value: String(needsReviewCount),
+            hint:
+              needsReviewCount > 0
+                ? "请从下方列表或「全部批次」打开对应 Run 处理 Wayfair 审查"
+                : "暂无需要人工审查的批次",
+          },
         ]}
       />
 
       <RunEntryGate />
-      <RunList runs={recentRuns} title="最近 10 个 Run" showViewAllLink />
+      <RunList runs={recentRuns} title="最近 10 个批次" showViewAllLink />
     </div>
   );
 }

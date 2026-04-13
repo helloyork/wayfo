@@ -10,6 +10,7 @@ import {
 } from "@/components/ui/card";
 import { Progress } from "@/components/ui/progress";
 import { Badge } from "@/components/ui/badge";
+import { cn } from "@/lib/utils";
 
 type ProgressStep = {
   step: string;
@@ -21,6 +22,8 @@ type RunProgressPanelProps = {
   steps: ProgressStep[];
   initialStatus: string;
   initialStep?: string;
+  id?: string;
+  className?: string;
 };
 
 export function RunProgressPanel({
@@ -28,6 +31,8 @@ export function RunProgressPanel({
   steps,
   initialStatus,
   initialStep,
+  id,
+  className,
 }: RunProgressPanelProps) {
   const [status, setStatus] = useState(initialStatus);
   const [currentStep, setCurrentStep] = useState(initialStep ?? "");
@@ -91,7 +96,7 @@ export function RunProgressPanel({
   }, [runId]);
 
   return (
-    <Card className="shadow-sm">
+    <Card id={id} className={cn("scroll-mt-24 shadow-sm", className)}>
       <CardHeader className="pb-2">
         <div className="flex flex-wrap items-center gap-2">
           <CardTitle>Run 运行进度</CardTitle>

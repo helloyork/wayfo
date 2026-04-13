@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { apiBase } from "../../lib/api";
 import { Button } from "@/components/ui/button";
@@ -62,6 +63,8 @@ type PlanRunResponse = {
     skippedExisting: number;
     skippedSecondary: number;
   };
+  /** New run ids created in this plan-run invocation (same order as creation). */
+  createdRunIds?: string[];
 };
 
 type PlanItem = {
@@ -96,6 +99,31 @@ function badgeVariant(
 
 const YESTERDAY_ROWS = 5;
 const FUTURE_ROWS = 5;
+
+/** Actionable links after plan-run completes (batch closure). */
+function PlanRunNextSteps({ createdRunIds }: { createdRunIds: string[] | null }) {
+  if (createdRunIds === null) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/25 bg-gradient-to-r from-primary/10 to-transparent px-3 py-2.5">
+      <span className="text-sm font-medium text-foreground">下一步</span>
+      {createdRunIds.length > 0 ? (
+        <Button asChild size="sm" type="button">
+          <Link href={`/runs/${createdRunIds[0]}`}>打开首个新批次</Link>
+        </Button>
+      ) : null}
+      {createdRunIds.length > 1 ? (
+        <span className="text-xs text-muted-foreground">
+          另有 {createdRunIds.length - 1} 个新批次，可在列表中查看
+        </span>
+      ) : null}
+      <Button asChild size="sm" variant="outline" type="button">
+        <Link href="/runs">查看全部批次</Link>
+      </Button>
+    </div>
+  );
+}
 
 function PlanPreviewTable({ data }: { data: PlanPreviewResponse }) {
   const { today, dates, itemsByDate } = data;
@@ -210,6 +238,7 @@ export function CreateRunForm({
     "success" | "warning" | "danger"
   >("warning");
   const [planRunLoading, setPlanRunLoading] = useState(false);
+  const [planRunCreatedIds, setPlanRunCreatedIds] = useState<string[] | null>(null);
   const [planPreview, setPlanPreview] = useState<PlanPreviewResponse | null>(null);
   const [planPreviewLoading, setPlanPreviewLoading] = useState(false);
   const [taxonomyClasses, setTaxonomyClasses] = useState<TaxonomyClassRow[]>([]);
@@ -427,6 +456,7 @@ export function CreateRunForm({
     }
     setPlanRunLoading(true);
     setPlanRunStatus(null);
+    setPlanRunCreatedIds(null);
     try {
       const res = await fetch(`${apiBase}/api/runs/plan-run`, {
         method: "POST",
@@ -441,11 +471,23 @@ export function CreateRunForm({
         throw new Error(err.message ?? "计划执行失败");
       }
       const payload = (await res.json()) as PlanRunResponse;
-      setPlanRunStatusTone("success");
-      setPlanRunStatus(
-        `执行完成：${payload.summary.createdRuns} 个任务入队，` +
-          `${payload.summary.skippedExisting} 个已处理跳过`
-      );
+      setPlanRunCreatedIds(payload.createdRunIds ?? []);
+      const created = payload.summary.createdRuns;
+      if (created === 0) {
+        setPlanRunStatusTone("warning");
+        setPlanRunStatus(
+          `未新建批次：今日计划行 ${payload.summary.planRows}，` +
+            `已存在跳过 ${payload.summary.skippedExisting}，` +
+            `非主行跳过 ${payload.summary.skippedSecondary}。可在「全部批次」核对或调整计划表后重试`
+        );
+      } else {
+        setPlanRunStatusTone("success");
+        setPlanRunStatus(
+          `执行完成：${created} 个批次已创建并入队，` +
+            `${payload.summary.skippedExisting} 个已存在跳过，` +
+            `${payload.summary.skippedSecondary} 个非主行跳过`
+        );
+      }
       fetchPlanPreview();
     } catch (err) {
       setPlanRunStatusTone("danger");
@@ -623,9 +665,12 @@ export function CreateRunForm({
             <Badge variant={badgeVariant(planStatusTone)}>{planStatus}</Badge>
           ) : null}
           {planRunStatus ? (
-            <Badge variant={badgeVariant(planRunStatusTone)}>
-              {planRunStatus}
-            </Badge>
+            <div className="flex flex-col gap-3">
+              <Badge variant={badgeVariant(planRunStatusTone)} className="w-fit">
+                {planRunStatus}
+              </Badge>
+              <PlanRunNextSteps createdRunIds={planRunCreatedIds} />
+            </div>
           ) : null}
         </CardContent>
       </Card>

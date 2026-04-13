@@ -40,8 +40,8 @@ export function ProductCard({ product }: { product: ProductSummary }) {
     : product.imageUrl;
 
   return (
-    <Link href={`/products/${product.asin}`}>
-      <Card className="overflow-hidden shadow-sm transition-shadow hover:shadow">
+    <Card className="flex h-full flex-col overflow-hidden shadow-sm transition-shadow hover:shadow-md">
+      <Link href={`/products/${product.asin}`} className="block flex-1 outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 ring-offset-background">
         <CardHeader className="p-0">
           <div className="aspect-square w-full overflow-hidden bg-muted/50">
             {imageSrc ? (
@@ -65,7 +65,16 @@ export function ProductCard({ product }: { product: ProductSummary }) {
             {product.availability?.isAvailable ? "有货" : "无货"}
           </CardDescription>
         </CardContent>
-      </Card>
-    </Link>
+      </Link>
+      <div className="border-t border-border/80 px-4 py-2.5">
+        <Link
+          href={`/runs/${product.runId}`}
+          title={product.runId}
+          className="inline-block max-w-full truncate font-mono text-xs font-medium text-primary hover:underline"
+        >
+          来源批次 · {product.runId}
+        </Link>
+      </div>
+    </Card>
   );
 }

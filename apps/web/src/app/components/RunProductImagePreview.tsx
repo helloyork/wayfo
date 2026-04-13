@@ -1,8 +1,10 @@
 "use client";
 
+import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { apiBase } from "../../lib/api";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 
 type ScrapedImageItem = {
   url: string;
@@ -75,11 +77,18 @@ function ProductImageStrip({
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-border bg-muted/20 p-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-sm font-medium text-foreground">{row.title}</span>
-        <Badge variant="outline" className="font-mono text-xs">
-          {row.asin}
-        </Badge>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="min-w-0 truncate text-sm font-medium text-foreground">
+            {row.title}
+          </span>
+          <Badge variant="outline" className="shrink-0 font-mono text-xs">
+            {row.asin}
+          </Badge>
+        </div>
+        <Button asChild variant="outline" size="sm" className="shrink-0">
+          <Link href={`/products/${row.asin}`}>产品详情</Link>
+        </Button>
       </div>
       {active ? (
         <img
