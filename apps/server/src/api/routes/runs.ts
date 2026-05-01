@@ -8,6 +8,7 @@ import { z } from "zod";
 import {
   RunEvent,
   WayfairAnswer,
+  WayfairProductAdditionSubmission,
   WayfairProductAdditionQuestion,
   WayfairSubmitProductAdditionsRequest
 } from "@wayfo/shared";
@@ -246,7 +247,32 @@ function readLatestJsonInDir<T>(dirPath: string, prefix: string) {
 
 function readLatestSubmissions(runId: string) {
   const dirPath = path.join(runsRoot, runId, "artifacts", "wayfair", "submissions");
-  return readLatestJsonInDir(dirPath, "attempt-");
+  return readLatestJsonInDir<WayfairProductAdditionSubmission[]>(dirPath, "attempt-");
+}
+
+function questionPartKey(supplierPartNumber: string | null | undefined, questionId: string) {
+  return `${supplierPartNumber ?? "*"}::${questionId}`;
+}
+
+function collectRemovableQuestionKeys(submissions: WayfairProductAdditionSubmission[] | null) {
+  const keys = new Set<string>();
+  for (const submission of submissions ?? []) {
+    for (const flaw of submission.validationFlaws ?? []) {
+      keys.add(questionPartKey(submission.supplierPartNumber, flaw.questionId));
+    }
+  }
+  return keys;
+}
+
+function canRemoveBaseAnswer(
+  removableQuestionKeys: Set<string>,
+  supplierPartNumber: string | null | undefined,
+  questionId: string
+) {
+  return (
+    removableQuestionKeys.has(questionPartKey(supplierPartNumber, questionId)) ||
+    removableQuestionKeys.has(questionPartKey(null, questionId))
+  );
 }
 
 function readLatestRepairSuggestions(runId: string) {
@@ -321,27 +347,6 @@ function findSubmittedPart(parts: Record<string, unknown>[], basePart: ReviewPar
   return bySupplierPartNumber ?? parts[index];
 }
 
-function shouldMergeSparseAnswers(
-  submittedPart: Record<string, unknown> | undefined,
-  baseAnswers: WayfairAnswer[],
-  submittedAnswers: WayfairAnswer[] | null
-) {
-  if (!submittedPart || submittedAnswers === null) {
-    return true;
-  }
-  const missingCoreFields =
-    !Object.prototype.hasOwnProperty.call(submittedPart, "amazonStandardIdentificationNumber") ||
-    !Object.prototype.hasOwnProperty.call(submittedPart, "productName") ||
-    !Object.prototype.hasOwnProperty.call(submittedPart, "media");
-  if (missingCoreFields) {
-    return true;
-  }
-  if (baseAnswers.length < 4) {
-    return false;
-  }
-  return submittedAnswers.length <= Math.max(2, Math.floor(baseAnswers.length / 2));
-}
-
 function extractFallbackAnswersByPart(
   baseRequest: WayfairSubmitProductAdditionsRequest,
   rawAnswers: unknown
@@ -373,7 +378,8 @@ function normalizeReviewRequest(
   request: Record<string, unknown>,
   questions: WayfairProductAdditionQuestion[],
   baseRequest?: WayfairSubmitProductAdditionsRequest | null,
-  rawAnswers?: unknown
+  rawAnswers?: unknown,
+  removableQuestionKeys: Set<string> = new Set()
 ) {
   const questionMap = new Map(flattenQuestions(questions).map((question) => [question.id, question]));
   const touched = new Set<string>();
@@ -431,20 +437,24 @@ function normalizeReviewRequest(
             fallbackAnswers.length > (basePart.answers?.length ?? 0)
               ? fallbackAnswers
               : (basePart.answers ?? []);
+          const submittedQuestionIds = new Set(
+            (submittedAnswers ?? []).map((answer) => answer.questionId)
+          );
           const mergedAnswers =
             submittedAnswers === null
               ? baseAnswers
-              : shouldMergeSparseAnswers(submittedPart, baseAnswers, submittedAnswers)
-                ? [
-                    ...baseAnswers.filter(
-                      (answer: WayfairAnswer) =>
-                        !submittedAnswers.some(
-                          (candidate: WayfairAnswer) => candidate.questionId === answer.questionId
-                        )
-                    ),
-                    ...submittedAnswers
-                  ]
-                : submittedAnswers;
+              : [
+                  ...baseAnswers.filter(
+                    (answer: WayfairAnswer) =>
+                      !submittedQuestionIds.has(answer.questionId) &&
+                      !canRemoveBaseAnswer(
+                        removableQuestionKeys,
+                        basePart.supplierPartNumber,
+                        answer.questionId
+                      )
+                  ),
+                  ...submittedAnswers
+                ];
           return {
             ...basePart,
             ...(submittedPart ?? {}),
@@ -1324,6 +1334,7 @@ runsRouter.post("/:runId/wayfair/draft", async (req, res) => {
   const questions = readQuestionsArtifact(run.id);
   const baseRequest = readSubmitRequest(run.id);
   const rawAnswers = readSubmitAnswers(run.id);
+  const removableQuestionKeys = collectRemovableQuestionKeys(readLatestSubmissions(run.id));
   try {
     const normalized =
       questions && baseRequest
@@ -1331,7 +1342,8 @@ runsRouter.post("/:runId/wayfair/draft", async (req, res) => {
             parsed.data.request,
             questions,
             baseRequest.data as WayfairSubmitProductAdditionsRequest,
-            rawAnswers
+            rawAnswers,
+            removableQuestionKeys
           )
         : { request: parsed.data.request };
     createArtifact({
@@ -1377,6 +1389,7 @@ runsRouter.post("/:runId/wayfair/review", async (req, res) => {
   }
   const baseRequest = readSubmitRequest(run.id);
   const rawAnswers = readSubmitAnswers(run.id);
+  const removableQuestionKeys = collectRemovableQuestionKeys(readLatestSubmissions(run.id));
   if (!baseRequest) {
     return sendError(res, {
       code: "REQUEST_NOT_FOUND",
@@ -1388,7 +1401,8 @@ runsRouter.post("/:runId/wayfair/review", async (req, res) => {
       parsed.data.request,
       questions,
       baseRequest.data as WayfairSubmitProductAdditionsRequest,
-      rawAnswers
+      rawAnswers,
+      removableQuestionKeys
     );
     await resumeWayfairAfterReview(
       run.id,

@@ -24,6 +24,7 @@ export type FlawRepairResult = {
 
 export type FlawAgentResult = {
   questionId: string;
+  supplierPartNumber?: string | null;
   flaw: string;
   result: FlawRepairResult;
 };
@@ -255,6 +256,7 @@ export async function repairFlawsWithAgent(input: {
     if (!question) {
       results.push({
         questionId: flaw.questionId,
+        supplierPartNumber: flaw.supplierPartNumber ?? null,
         flaw: flaw.flaw,
         result: {
           repaired: false,
@@ -276,6 +278,7 @@ export async function repairFlawsWithAgent(input: {
 
     results.push({
       questionId: flaw.questionId,
+      supplierPartNumber: flaw.supplierPartNumber ?? null,
       flaw: flaw.flaw,
       result
     });

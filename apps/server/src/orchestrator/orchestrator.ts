@@ -1947,17 +1947,21 @@ async function runWayfairPoll(
             let agentAppliedCount = 0;
 
             if (!options?.skipAgentRepair && reduced.summary.unrepairableFlaws > 0 && snapshot) {
-              const unrepairedFlaws = reduced.suggestions
-                .filter((s) => !s.repairable && s.questionId !== "media::imageValue")
-                .map((s) => {
-                  const originalFlaw = submissions.flatMap((sub) => sub.validationFlaws ?? [])
-                    .find((f) => f.questionId === s.questionId);
-                  return {
-                    questionId: s.questionId,
-                    flawType: (originalFlaw?.flawType ?? "ERROR") as "ERROR" | "WARNING",
-                    flaw: s.flaw
-                  };
-                });
+              const unrepairedQuestionIds = new Set(
+                reduced.suggestions
+                  .filter((s) => !s.repairable && s.questionId !== "media::imageValue")
+                  .map((s) => s.questionId)
+              );
+              const unrepairedFlaws = submissions.flatMap((submission) =>
+                (submission.validationFlaws ?? [])
+                  .filter((flaw) => unrepairedQuestionIds.has(flaw.questionId))
+                  .map((flaw) => ({
+                    questionId: flaw.questionId,
+                    flawType: flaw.flawType,
+                    flaw: flaw.flaw,
+                    supplierPartNumber: submission.supplierPartNumber ?? null
+                  }))
+              );
 
               if (unrepairedFlaws.length > 0) {
                 const existingAnswers = finalRequest.proposedProductAdditions
@@ -1982,15 +1986,23 @@ async function runWayfairPoll(
 
                 for (const agentResult of agentResults) {
                   if (agentResult.result.repaired && agentResult.result.answers.length > 0) {
+                    const targetPartNumber = agentResult.supplierPartNumber ?? null;
+                    let appliedToPart = false;
                     for (const addition of finalRequest.proposedProductAdditions) {
-                      for (const part of addition.parts) {
+                      const targetParts = targetPartNumber
+                        ? addition.parts.filter((part) => part.supplierPartNumber === targetPartNumber)
+                        : addition.parts;
+                      for (const part of targetParts) {
                         part.answers = part.answers.filter(
                           (a) => a.questionId !== agentResult.questionId
                         );
                         part.answers.push(...agentResult.result.answers);
+                        appliedToPart = true;
                       }
                     }
-                    agentAppliedCount += 1;
+                    if (appliedToPart) {
+                      agentAppliedCount += 1;
+                    }
                   }
                 }
               }
@@ -2022,12 +2034,27 @@ async function runWayfairPoll(
                   agentAppliedCount,
                   agentResults: agentResults.map((r) => ({
                     questionId: r.questionId,
+                    supplierPartNumber: r.supplierPartNumber ?? null,
                     flaw: r.flaw,
                     repaired: r.result.repaired,
                     confidence: r.result.confidence,
                     reason: r.result.reason
                   }))
                 }
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/repairSuggestions",
+                relativePath: `wayfair/submit/repairs/suggestions-${repairId}.json`,
+                content: reduced.suggestions
+              });
+              createArtifact({
+                runId: run.id,
+                jobId: job.id,
+                type: "wayfair/submit/repairSourceRequest",
+                relativePath: `wayfair/submit/repairs/source-${repairId}.json`,
+                content: request
               });
               createArtifact({
                 runId: run.id,

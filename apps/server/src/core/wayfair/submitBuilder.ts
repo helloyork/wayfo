@@ -138,17 +138,17 @@ export async function buildWayfairSubmitRequest(input: {
   const answerResult = await generateWayfairAnswers({
     snapshot: input.snapshot,
     questions: input.questions,
-    skipQuestionIds: Array.from(skipQuestionIds)
+    skipQuestionIds: Array.from(skipQuestionIds),
+    ...(input.promptModifier?.trim() ? { promptModifier: input.promptModifier.trim() } : {})
   });
   const rawAnswers = (answerResult.data as { answers?: unknown }).answers;
-  const answers = Array.isArray(rawAnswers)
-    ? sanitizeAnswers(
-        rawAnswers.filter(
-          (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
-            item && typeof item === "object" && "questionId" in item && "value" in item
-        )
+  const generated = Array.isArray(rawAnswers)
+    ? rawAnswers.filter(
+        (item): item is { questionId: string; value: string; parentRank?: number; rank?: number } =>
+          item && typeof item === "object" && "questionId" in item && "value" in item
       )
     : [];
+  const answers = applyPlanAnswerMerge(input.questions, generated, input.planAnswerEntries);
 
   const request: WayfairSubmitProductAdditionsRequest = {
     supplierId: input.supplierId,
